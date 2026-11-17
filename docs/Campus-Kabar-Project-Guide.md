@@ -78,6 +78,15 @@ Only authenticated and authorized staff can access the
 content-management area. Admin and editor permissions must be enforced
 by the backend API, not merely hidden in the frontend.
 
+### Roles in the `users` table
+
+The `users` table stores a `role` column with three supported values:
+`admin`, `editor`, and `reader`. This is a schema-level capability only:
+reader registration, reader login, and any reader-facing account feature
+remain out of scope for Version 1. No `reader` rows are created in
+Version 1. The database is shaped so reader accounts can be enabled
+later without a destructive migration.
+
 The exact permission split between Admin and Editor can be refined, but
 do not introduce public user accounts in Version 1 without an explicit
 product decision.
@@ -267,6 +276,10 @@ discussed before changing it.
                                                   and parameterized
                                                   queries
 
+  Migrations and query    Knex.js                 Versioned schema
+  builder                                         migrations and query
+                                                  building
+
   Rich-text editor        TipTap (preferred)      Structured editorial
                                                   content and inline
                                                   media
@@ -313,84 +326,318 @@ services, middleware, database, validators, and configuration). Avoid
 putting the entire application into one file. Do not over-engineer with
 microservices.
 
-## 9. Initial Database Design
+## 9. Database Design (Approved)
 
-Design and review an ER diagram before implementing the schema. The
-following is the proposed starting model, not permission to generate
-every table immediately.
+Status: approved in Milestone 0 and implemented in Milestone 2 with
+Knex migrations. This section is the authoritative schema reference;
+where it differs from earlier drafts, this section wins.
+
+### Conventions
+
+-   MySQL 8, InnoDB, `utf8mb4` / `utf8mb4_0900_ai_ci`.
+-   Primary keys are `BIGINT UNSIGNED AUTO_INCREMENT`.
+-   Timestamps are `DATETIME(3)` stored in UTC. Every pooled connection
+    runs `SET time_zone = '+00:00'`, and the driver is configured with
+    `timezone: 'Z'`. Display timezones are a presentation concern.
+-   Enumerations are `VARCHAR` columns guarded by named `CHECK`
+    constraints instead of MySQL `ENUM`, so adding an allowed value is
+    a metadata-only change. Knex has no schema builder API for `CHECK`,
+    so migrations use `knex.raw()` for these constraints.
+-   Files are never stored in MySQL. The `media` table stores metadata
+    and a reference to the object in external storage.
+-   No `campuses` table or `campus_id` until multi-campus operation is
+    decided. Do not assume a tenancy model.
+
+### ER diagram
+
+```mermaid
+erDiagram
+    users ||--o{ posts : "authors"
+    users ||--o{ media : "uploads"
+    categories ||--o{ posts : "classifies"
+    posts ||--o{ post_media : "has"
+    media ||--o{ post_media : "is used by"
+    media ||--o| posts : "cover for"
+
+    users {
+        bigint id PK
+        varchar name
+        varchar email UK
+        varchar password_hash
+        varchar role
+        boolean is_active
+    }
+    categories {
+        bigint id PK
+        varchar name
+        varchar slug UK
+        boolean is_active
+        int sort_order
+    }
+    posts {
+        bigint id PK
+        varchar title
+        varchar slug UK
+        json content
+        varchar post_type
+        varchar status
+        bigint category_id FK
+        bigint author_id FK
+        bigint cover_media_id FK
+        datetime published_at
+        datetime expires_at
+        datetime deleted_at
+    }
+    media {
+        bigint id PK
+        varchar media_type
+        varchar source_type
+        varchar storage_provider
+        varchar storage_key
+        varchar file_url
+        varchar mime_type
+        bigint file_size
+        bigint uploaded_by FK
+    }
+    post_media {
+        bigint post_id PK,FK
+        bigint media_id PK,FK
+        varchar usage_type PK
+        int sort_order
+    }
+```
 
 ### `users`
 
-Staff accounts only.
+One table for every person who can sign in. Every row is a real account
+with a password hash; there is no passwordless account in Version 1.
 
-Suggested fields: `id`, `name`, `email` (unique), `password_hash`,
-`role` (`admin` or `editor`), `created_at`, `updated_at`, and optional
-`is_active`.
+| Column          | Type                | Null | Notes                                     |
+| --------------- | ------------------- | ---- | ----------------------------------------- |
+| `id`            | BIGINT UNSIGNED PK  | no   | Auto-increment                            |
+| `name`          | VARCHAR(120)        | no   | Display name                              |
+| `email`         | VARCHAR(255)        | no   | Unique; stored lower-case by the service  |
+| `password_hash` | VARCHAR(255)        | no   | bcrypt/Argon2 hash, never plaintext       |
+| `role`          | VARCHAR(16)         | no   | `admin`, `editor`, `reader`; default `editor` |
+| `is_active`     | BOOLEAN             | no   | Default TRUE                               |
+| `created_at`    | DATETIME(3)         | no   | UTC                                        |
+| `updated_at`    | DATETIME(3)         | no   | UTC                                        |
+
+-   `CHECK (role IN ('admin','editor','reader'))`.
+-   `reader` is reserved for a future reader-account feature. No reader
+    rows are created in Version 1, and readers do not register or log
+    in. Because `password_hash` is NOT NULL, introducing passwordless
+    readers later requires a migration.
+-   Accounts are deactivated with `is_active = FALSE`, not deleted, so
+    authorship history stays intact.
 
 ### `categories`
 
-Suggested fields: `id`, `name`, `slug` (unique), `description`,
-`created_at`, `updated_at`.
+| Column        | Type               | Null | Notes                                    |
+| ------------- | ------------------ | ---- | ---------------------------------------- |
+| `id`          | BIGINT UNSIGNED PK | no   | Auto-increment                           |
+| `name`        | VARCHAR(120)       | no   | Unique display name                      |
+| `slug`        | VARCHAR(160)       | no   | Unique; public URL segment               |
+| `description` | VARCHAR(500)       | yes  | Short public description                 |
+| `is_active`   | BOOLEAN            | no   | Default TRUE; inactive hides from public |
+| `sort_order`  | INT                | no   | Default 0; navigation order              |
+| `created_at`  | DATETIME(3)        | no   | UTC                                      |
+| `updated_at`  | DATETIME(3)        | no   | UTC                                      |
+
+Posts reference categories with `ON DELETE RESTRICT`: a category that is
+still used cannot be removed. Deactivate it instead.
 
 ### `posts`
 
-Suggested fields:
+| Column           | Type               | Null | Notes                                            |
+| ---------------- | ------------------ | ---- | ------------------------------------------------ |
+| `id`             | BIGINT UNSIGNED PK | no   | Auto-increment                                   |
+| `title`          | VARCHAR(255)       | no   |                                                  |
+| `slug`           | VARCHAR(255)       | no   | Unique; public URL segment                       |
+| `summary`        | VARCHAR(500)       | yes  | Listing teaser                                   |
+| `content`        | JSON               | no   | Structured rich-text document (TipTap)           |
+| `post_type`      | VARCHAR(16)        | no   | `news`, `article`, `notice`, `announcement`      |
+| `category_id`    | BIGINT UNSIGNED    | no   | FK categories, `ON DELETE RESTRICT`              |
+| `author_id`      | BIGINT UNSIGNED    | no   | FK users, `ON DELETE RESTRICT`                   |
+| `cover_media_id` | BIGINT UNSIGNED    | yes  | FK media, `ON DELETE SET NULL`; at most one cover |
+| `status`         | VARCHAR(16)        | no   | `draft`, `published`, `unpublished`; default `draft` |
+| `is_featured`    | BOOLEAN            | no   | Default FALSE                                    |
+| `published_at`   | DATETIME(3)        | yes  | Set when first published                         |
+| `expires_at`     | DATETIME(3)        | yes  | Optional expiry for notices/announcements         |
+| `created_at`     | DATETIME(3)        | no   | UTC                                              |
+| `updated_at`     | DATETIME(3)        | no   | UTC                                              |
+| `deleted_at`     | DATETIME(3)        | yes  | Soft deletion timestamp                          |
 
--   `id`
--   `title`
--   `slug` (unique)
--   `summary`
--   `content` (MySQL JSON for structured rich-text content)
--   `post_type` (`news`, `article`, `notice`, `announcement`)
--   `category_id` (foreign key)
--   `author_id` (foreign key to users)
--   `status` (`draft`, `published`, `unpublished`)
--   `is_featured`
--   `published_at`
--   `expires_at` (nullable)
--   `created_at`
--   `updated_at`
--   `deleted_at` (nullable; soft deletion if adopted)
+Constraints:
+
+-   `CHECK (post_type IN ('news','article','notice','announcement'))`.
+-   `CHECK (status IN ('draft','published','unpublished'))`.
+-   `CHECK (status <> 'published' OR published_at IS NOT NULL)` — a
+    published post always has a publication time.
+-   `CHECK (expires_at IS NULL OR published_at IS NULL OR expires_at > published_at)`.
+
+A post has exactly one category in Version 1. `cover_media_id` is the
+single source of truth for the cover image; the cover is not duplicated
+in `post_media`.
 
 ### `media`
 
-Suggested fields: `id`, `media_type` (`image`, `video`, `document`),
-`source_type` (`upload`, `external`), `file_url`, `file_name`,
-`mime_type`, `file_size`, `created_at`, and optional uploader/storage
-metadata.
+Metadata for images, videos, and documents stored in object storage, plus
+external video embeds. One row per stored or embedded asset; rows are
+reusable across posts.
+
+| Column              | Type                | Null | Notes                                                    |
+| ------------------- | ------------------- | ---- | -------------------------------------------------------- |
+| `id`                | BIGINT UNSIGNED PK  | no   | Auto-increment                                           |
+| `media_type`        | VARCHAR(16)         | no   | `image`, `video`, `document`                             |
+| `source_type`       | VARCHAR(16)         | no   | `upload` (Cloudinary) or `external` (embed)              |
+| `storage_provider`  | VARCHAR(32)         | no   | e.g. `cloudinary`, `youtube`; keeps documents portable   |
+| `storage_key`       | VARCHAR(512)        | no   | Cloudinary `public_id`, or provider video ID             |
+| `file_url`          | VARCHAR(1024)       | no   | Delivery URL                                             |
+| `file_name`         | VARCHAR(255)        | yes  | Original or generated name                               |
+| `mime_type`         | VARCHAR(127)        | no   | Verified server-side, never trusted from the client      |
+| `file_size`         | BIGINT UNSIGNED     | yes  | Bytes; NULL only for external embeds                     |
+| `alt_text`          | VARCHAR(255)        | yes  | Accessibility text                                       |
+| `width`             | INT UNSIGNED        | yes  | Pixels; NULL until known                                 |
+| `height`            | INT UNSIGNED        | yes  | Pixels; NULL until known                                 |
+| `duration_seconds`  | DECIMAL(10,3)       | yes  | NULL for images/documents and while video processes      |
+| `uploaded_by`       | BIGINT UNSIGNED     | yes  | FK users, `ON DELETE SET NULL`                           |
+| `created_at`        | DATETIME(3)         | no   | UTC                                                      |
+
+Constraints:
+
+-   `CHECK (media_type IN ('image','video','document'))`.
+-   `CHECK (source_type IN ('upload','external'))`.
+-   `CHECK (source_type = 'external' OR (file_size IS NOT NULL AND file_size > 0))`.
+-   `UNIQUE (storage_provider, storage_key)` — deduplicates repeated
+    uploads and makes metadata registration idempotent.
+
+Accepted formats: images JPG/JPEG/PNG/WebP up to 5 MB; video MP4/WebM up
+to 100 MB; documents PDF and approved formats up to 10 MB. Formats and
+sizes are enforced during signed-upload validation and again by
+Cloudinary; the database enforces the structurally invalid cases.
 
 ### `post_media`
 
-Join table connecting posts and media. Suggested fields: `id`,
-`post_id`, `media_id`, `usage_type` (`cover`, `gallery`, `inline`,
-`attachment`), and `sort_order`.
+Junction table for gallery, inline, and attachment usage. The cover is
+not stored here; it lives on `posts.cover_media_id`.
 
-The rich-text document should preserve the exact position of inline
-media. Avoid relying only on a separate unordered attachment list for
-inline content.
+| Column       | Type             | Null | Notes                                       |
+| ------------ | ---------------- | ---- | ------------------------------------------- |
+| `post_id`    | BIGINT UNSIGNED  | no   | FK posts, `ON DELETE CASCADE`               |
+| `media_id`   | BIGINT UNSIGNED  | no   | FK media, `ON DELETE RESTRICT`              |
+| `usage_type` | VARCHAR(16)      | no   | `gallery`, `inline`, `attachment`           |
+| `sort_order` | INT              | no   | Default 0; gallery/attachment ordering      |
 
-### `tags` and `post_tags`
+-   Composite primary key `(post_id, media_id, usage_type)`.
+-   `CHECK (usage_type IN ('gallery','inline','attachment'))`.
+-   Secondary index `(media_id, usage_type)` for usage lookups.
 
-Optional tagging support:
+Inline placement inside the rich-text document is preserved by the JSON
+content itself (media IDs appear at their exact position). The
+`post_media` row is the relational reference; a media ID appearing in
+`posts.content` must have a matching `post_media` row. Foreign keys
+cannot enforce an invariant inside JSON, so the service layer enforces it
+on every save.
 
--   `tags`: `id`, `name`, `slug`.
--   `post_tags`: `post_id`, `tag_id`, with a composite primary key.
+### Tags
 
-### Relationships
+Deferred. No `tags` or `post_tags` tables in Version 1. Adding them later
+is additive: `tags` and a `post_tags` join table with a composite primary
+key.
 
--   One user can author many posts.
--   One category can contain many posts.
--   A post can reference multiple media records.
--   A media record may be reused by multiple posts if reuse is
-    supported.
--   Posts and tags have a many-to-many relationship.
+### Index plan
 
-Use foreign keys, appropriate indexes, unique constraints, and sensible
-deletion rules. Add indexes for common public queries such as
-publication status/date, category, content type, and slug.
+| Index                                       | Serves                                        |
+| ------------------------------------------- | --------------------------------------------- |
+| `users.email` UNIQUE                        | Login lookup                                  |
+| `users (role, is_active)`                   | Staff lists and permission checks             |
+| `categories.slug` UNIQUE                    | Public category pages                         |
+| `categories (is_active, sort_order)`        | Navigation rendering                          |
+| `posts.slug` UNIQUE                         | Public post lookup, including soft-deleted    |
+| `posts (status, deleted_at, published_at DESC, id)` | Public feed and pagination           |
+| `posts (post_type, status, deleted_at, published_at DESC)` | Type-filtered listings       |
+| `posts (category_id, status, deleted_at, published_at DESC)` | Category listings          |
+| `posts (is_featured, status, deleted_at, published_at DESC)` | Featured content           |
+| `posts (author_id, created_at)`             | Staff "my posts" view                         |
+| `posts (status, expires_at)`                | Expiry sweep for notices/announcements        |
+| `media (storage_provider, storage_key)` UNIQUE | Upload dedupe and metadata registration    |
+| `media (media_type, created_at)`            | Media library filtering                       |
+| `post_media (media_id, usage_type)`         | "Where is this media used?"                   |
 
-Do not add a `campuses` table or `campus_id` until single-campus versus
-multi-campus operation has been decided. Do not assume a tenancy model.
+Slugs stay globally unique even with soft deletion. Deleting a post
+rewrites its slug to `original-slug--deleted-<id>` so the original slug
+can be reused, while the unique constraint keeps working without
+NULL-based tricks.
+
+### Deletion rules
+
+| Relationship                    | Rule              | Reason                                        |
+| ------------------------------- | ----------------- | --------------------------------------------- |
+| `posts.category_id`             | RESTRICT          | Deactivate categories instead of deleting     |
+| `posts.author_id`               | RESTRICT          | Deactivate users instead of deleting          |
+| `posts.cover_media_id`          | SET NULL          | Cover removal must not delete the post        |
+| `media.uploaded_by`             | SET NULL          | Keep the asset when staff leave               |
+| `post_media.post_id`            | CASCADE           | Junction rows follow their post               |
+| `post_media.media_id`           | RESTRICT          | Never silently drop content references        |
+
+Posts use `deleted_at` (soft delete). Media and categories are not soft
+deleted in Version 1.
+
+### Database versus service-layer integrity
+
+| Rule                                                  | Enforced by |
+| ----------------------------------------------------- | ----------- |
+| Unique email, slug, storage object                     | Database    |
+| Enum values, published-needs-`published_at`, expiry ordering, positive file size | Database |
+| Referential integrity and delete rules                | Database    |
+| Media IDs in `posts.content` exist in `post_media`     | Service     |
+| `cover_media_id` belongs to an image and to the post's media set | Service |
+| Media metadata (size, MIME, dimensions, duration)      | Service, derived from Cloudinary |
+| Slug format, reserved words, slug rewrite on delete    | Service     |
+| Email normalisation and uniqueness case-insensitivity | Service + `utf8mb4_0900_ai_ci` |
+| Only one published revision / workflow transitions     | Service     |
+
+### Media upload workflow
+
+The backend never proxies file bytes. The browser uploads directly to
+Cloudinary using a signature the backend generates, then registers the
+result so MySQL only ever holds verified metadata.
+
+1.  Staff member selects a file. The client checks type and size for
+    fast feedback only.
+2.  The client requests `POST /api/media/signature` with the intended
+    `resource_type` and `usage_type`. The backend authenticates the
+    request, checks the role, maps `usage_type` to an allowed format and
+    size set (cover/gallery/inline image ≤ 5 MB; video ≤ 100 MB;
+    attachment document ≤ 10 MB), and returns `timestamp`, `folder`,
+    `allowed_formats`, `max_file_size`, `resource_type`, `public_id`,
+    and `signature`. The API secret never leaves the backend.
+3.  The browser posts the file and signed parameters to
+    `https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/upload`.
+    Cloudinary re-validates format and size and stores the object.
+4.  The browser sends the resulting `public_id` and `resource_type` to
+    `POST /api/media` — nothing else is trusted.
+5.  The backend calls the Cloudinary Admin API
+    (`GET /resources/<resource_type>/upload?public_id=…`, Basic auth) and
+    derives `file_url`, `file_name`, `mime_type`, `file_size`, `width`,
+    `height`, and `duration_seconds` from the response. Video duration
+    can be absent while transcoding is still running, so
+    `duration_seconds` stays nullable and the service retries or leaves
+    it empty.
+6.  The backend inserts the `media` row, deduplicating on
+    `(storage_provider, storage_key)`; repeated registration returns the
+    existing row. It then attaches the media to the post via
+    `post_media` with its `usage_type`, or sets `posts.cover_media_id`.
+7.  Rendering uses the stored `file_url`; inline content keeps media IDs
+    at their exact position in the JSON document.
+
+Cloudinary restricts PDF/ZIP delivery on some account tiers. Verify the
+account's delivery settings before launch; `storage_provider`/
+`storage_key` keep the metadata portable to another provider. Direct
+browser upload is preferred over proxying through Express because it
+avoids buffering 100 MB videos in API memory and keeps delivery on the
+CDN.
 
 ## 10. Security and Quality Requirements
 
@@ -578,16 +825,34 @@ For each task:
 
 ## 14. Decisions Still to Confirm
 
-Do not guess these:
+Resolved before Milestone 2:
+
+-   One `users` table with `admin`, `editor`, and `reader` roles.
+    `password_hash` is NOT NULL; no reader accounts or reader login in
+    Version 1.
+-   MySQL 8 with `mysql2` and Knex.js migrations.
+-   Cloudinary as the initial media provider, with signed direct
+    browser uploads and backend verification.
+-   Images, real videos, and documents are all uploaded in Version 1;
+    external video embeds are also allowed.
+-   Each post has exactly one category; the cover is stored on
+    `posts.cover_media_id`.
+-   Tags are deferred and are not part of Version 1.
+
+Still open; do not guess these:
 
 -   Is Campus Kabar for one campus/organization only, or should it
     support multiple campuses in the future?
 -   Can Editors publish directly, or must an Admin approve their drafts?
 -   Which language will Version 1 use?
--   Which media storage provider and hosting environment will be used?
--   Should uploaded videos be stored directly, or should Version 1
-    prefer external video embeds?
--   Are tags required in the first release, or can they wait?
+-   Which hosting environment will be used?
+-   Is keyword search across post bodies required in Version 1? If so,
+    a denormalised `posts.content_text` column with a FULLTEXT index
+    should be added by migration.
+-   Is an audit trail required for content and staff actions?
+-   How long should soft-deleted posts be retained before permanent
+    removal?
+-   Which display timezone should staff and public pages use?
 
 Where a decision does not block the current milestone, record it and
 continue without prematurely implementing it.
