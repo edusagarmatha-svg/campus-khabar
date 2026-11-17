@@ -1,52 +1,55 @@
 # Campus Kabar — Development Progress Report
 
 **Date:** 17 November 2026
-**Branch:** `feat/db-migrations`
-**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, committed `2a3eb31`), and the Express backend foundation (implemented, verified, not yet committed)
-**Report status:** factual snapshot of the working tree and the verification database. The Express server was started and stopped, its endpoints exercised, and its failure paths checked.
+**Branch:** `feat/authentication` (HEAD `d055b53`)
+**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), and Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap)
+**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. No Stage 1 work is committed yet.
 
 ---
 
 ## Next Session Handoff
 
-**Read this section first.** Snapshot taken after the Express foundation was verified and before it is committed.
+**Read this section first.** Snapshot after Stage 1 of Milestone 3 was implemented and verified.
 
 ### Status
 
 | Item | State |
 | --- | --- |
-| Branch / HEAD | `feat/db-migrations` / `2a3eb31` |
+| Branch / HEAD | `feat/authentication` / `d055b53` (no upstream yet; not pushed) |
 | Milestone 0 — design | Complete; approved schema recorded in the guide §9 |
 | Milestone 1 — project foundation | Complete: React/Vite frontend template plus the Express API entry point |
 | Milestone 2 — database foundation | Implemented, verified, committed as `2a3eb31` |
-| Express backend foundation | Implemented and verified; **uncommitted working-tree changes** |
-| Milestones 3–8 | Not started |
+| Express backend foundation | Implemented, verified, committed as `bb1d321`; merged into `develop` by PR #1 (`d055b53`) |
+| Milestone 3 — Stage 1 | **Implemented and verified; uncommitted** (see §13) |
+| Milestone 3 — Stages 2–3 | Not started |
 
-**Deliberately not done yet:** `.env` for the team's real database, staff authentication, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration.
+**Deliberately not done yet:** `.env` for the team's real database, auth routes/middleware, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration.
 
-**Do not redo:** the five migrations are written and verified in both directions; the seed is applied and idempotent; Knex is installed and configured; the Express app, server, and env loader exist and work. Running `migrate:latest` again on the verification database is a no-op, not a rebuild.
+**Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
-### Next milestone: Milestone 3 — staff authentication and authorization
+### Completed in Stage 1
 
-1. Create the first Admin account through a guarded, env-driven bootstrap script using bcrypt or Argon2; never seed a hardcoded password.
-2. Implement `POST /api/auth/login` and `GET /api/auth/me`, issuing JWTs with an expiry and rejecting inactive users.
-3. Add authentication and role middleware (`requireAuth`, `requireRole`) and protect management routes with it.
-4. Test 401 for missing or invalid tokens and 403 for insufficient roles.
+1. Corrected this report's stale branch/commit claims (§12).
+2. Extended `backend/src/config/env.js` with JWT secret, token lifetimes, cookie settings, and `trust proxy` validation, and documented them in `.env.example`.
+3. Added migration `20261117090006_create_refresh_tokens.js`: `users.last_login_at` plus a hashed, session-scoped `refresh_tokens` table.
+4. Added `npm run create-admin`, an interactive bootstrap that hides password input, refuses a second Admin, and uses bcrypt cost 12.
+5. Verified migration up/down and every bootstrap path against an isolated MySQL test database (§13).
 
-Out of scope until later milestones: posts/categories/media CRUD, Cloudinary, and frontend screens.
+### Next stage: Milestone 3, Stage 2 — endpoints and middleware
+
+1. Implement `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, and `GET /api/auth/me`.
+2. Add the token service (JWT access token, opaque SHA-256-hashed refresh token, transactional rotation with per-session reuse revocation).
+3. Add `authenticate`, `authorize(...)`, Origin validation for cookie routes, rate limiting, and the standardized error shape.
+4. Wire CORS credentials, `cookie-parser`, `helmet`, and `trust proxy` into `app.js`.
+
+Out of scope until later milestones: posts/categories/media CRUD, Cloudinary, frontend screens.
 
 ### Exact next steps
 
-1. Review and commit the Express foundation; nothing new is committed yet. Implementation details and evidence are in §11 and §12.
-2. Obtain the real `DB_*` values, create `backend/.env` (never committed), then run `npm run migrate` and `npm run seed` against that database.
-3. Start Milestone 3 with the Admin bootstrap script, then login/current-user, then middleware.
-4. Update the project guide when auth decisions (token lifetime, header vs cookie) are approved.
-
-### Remaining pre-commit tasks
-
-- Review the uncommitted diff (§12) and confirm no credentials, local-only paths, or generated files are included.
-- Decide whether to accept the ascending feed indexes or add a `DESC` migration (does not block the commit).
-- Commit the Express foundation once approved.
+1. Review the Stage 1 diff and commit it on `feat/authentication` (no push to `develop`/`main`; open a PR when the milestone is ready).
+2. Start Stage 2; do not begin until Stage 1 is accepted.
+3. Keep the authentication test database (container `campus-kabar-auth-test`, port 3308) disposable. Its credentials live only in the local shell, never in the repository or this document.
+4. Obtain the real `DB_*` values and create `backend/.env` (never committed) before running against the team database.
 
 ---
 
@@ -66,7 +69,8 @@ campus-khabar/
 │   │   ├── 20261117090002_create_categories.js
 │   │   ├── 20261117090003_create_media.js
 │   │   ├── 20261117090004_create_posts.js
-│   │   └── 20261117090005_create_post_media.js
+│   │   ├── 20261117090005_create_post_media.js
+│   │   └── 20261117090006_create_refresh_tokens.js
 │   ├── seeds/
 │   │   └── 001_initial_categories.js
 │   └── src/
@@ -74,8 +78,10 @@ campus-khabar/
 │       ├── server.js
 │       ├── config/
 │       │   └── env.js
-│       └── db/
-│           └── knex.js
+│       ├── db/
+│       │   └── knex.js
+│       └── scripts/
+│           └── create-admin.js
 ├── frontend/            (unmodified Vite + React 19 template)
 └── docs/
     ├── Campus-Kabar-Project-Guide.md
@@ -92,7 +98,7 @@ campus-khabar/
 | DB driver | `mysql2` 3.24.6 | Connection pool configured |
 | Migrations / query builder | Knex.js 3.3.0 | Added in this milestone |
 | Media storage | Cloudinary (approved) | Not integrated yet (Milestone 5) |
-| Auth | JWT + bcrypt/Argon2 (planned) | Not implemented (Milestone 3) |
+| Auth | JWT access tokens + opaque rotating refresh tokens, bcrypt cost 12 | Stage 1 foundation done; endpoints in Stage 2 |
 
 ### Architecture rules in force
 
@@ -183,6 +189,7 @@ All migrations were created in this milestone and applied in one batch during ve
 | `backend/migrations/20261117090003_create_media.js` | Creates `media` with storage columns, unique `(storage_provider, storage_key)`, `uploaded_by` FK (SET NULL), `(media_type, created_at)` index, and three CHECK constraints. |
 | `backend/migrations/20261117090004_create_posts.js` | Creates `posts` with JSON content, FKs to `categories`, `users`, `media`, six query indexes, and four CHECK constraints (enums, published-needs-date, expiry ordering). |
 | `backend/migrations/20261117090005_create_post_media.js` | Creates the composite-key junction table with CASCADE on post, RESTRICT on media, usage-type CHECK, and `(media_id, usage_type)` index. |
+| `backend/migrations/20261117090006_create_refresh_tokens.js` | Milestone 3: adds `users.last_login_at` and creates `refresh_tokens` (`user_id` FK CASCADE, `session_id`, unique `token_hash`, `expires_at`, `revoked_at`, self-referencing `replaced_by_id` SET NULL, `created_at`) with session, user/expiry, and expiry indexes. |
 
 Every migration implements `exports.down` as `knex.schema.dropTable(...)`. **Rollback was verified**: `knex migrate:rollback --all` removed all five tables and emptied `knex_migrations` in 6.192 s, and `migrate:latest` restored the full schema.
 
@@ -200,9 +207,10 @@ Related non-migration file:
 | --- | --- |
 | Added runtime dependency | `knex@^3.3.0` in `backend/package.json`; lockfile resolved `knex` 3.3.0 |
 | Updated | `backend/package-lock.json` (246 added lines) |
-| Added npm scripts | `migrate`, `migrate:rollback`, `migrate:make`, `seed` |
+| Added npm scripts | `migrate`, `migrate:rollback`, `migrate:make`, `seed`; later `create-admin` |
+| Added in Milestone 3 Stage 1 | `jsonwebtoken@^9.0.3`, `bcrypt@^6.0.0`, `cookie-parser@^1.4.7`, `express-rate-limit@^8.7.4`, `zod@^4.6.7`, `helmet@^8.3.0`, and dev dependency `supertest@^7.3.2`. All load on Node 22.23.4. |
 | Unchanged | `express@^5.3.0`, `cors@^2.8.6`, `dotenv@^18.0.10`, `mysql2@^3.24.6`, `nodemon@^3.1.14` |
-| Not installed (deliberately) | `bcrypt`/`argon2` (Milestone 3), Cloudinary SDK (Milestone 5), `content_text` search support (undecided) |
+| Not installed (deliberately) | Argon2 (bcrypt was chosen), Cloudinary SDK (Milestone 5), `content_text` search support (undecided) |
 
 Scripts now defined:
 
@@ -483,15 +491,16 @@ No `.env`, `node_modules`, database files, or Docker artifacts are tracked or st
 
 ## 9. Remaining tasks and exact next steps
 
-Milestone 2 is complete and committed (`2a3eb31`). The Express foundation (§11) is implemented and verified, but **not committed**.
+Milestone 2 and the Express foundation are complete and committed. Milestone 3 Stage 1 is implemented and verified but **uncommitted**.
 
-1. **Review and commit the Express foundation** (§12).
-2. **Configure the real database.** Create `backend/.env` from the example with the credentials the team actually uses (`cp .env.example .env`, then edit `DB_*`). The host MySQL on 3306 is still inaccessible to the current user (`root` is socket-auth-only and `sudo` needs a password), so all checks so far used the container on 3307. Do not invent credentials.
+1. **Review and commit Stage 1** on `feat/authentication`, then continue with Stage 2 (auth endpoints and middleware).
+2. **Configure the real database.** Create `backend/.env` from the example with the credentials the team actually uses (`cp .env.example .env`, then edit `DB_*` and `JWT_ACCESS_SECRET`). The host MySQL on 3306 is still inaccessible to the current user (`root` is socket-auth-only and `sudo` needs a password), so all checks so far used local containers. Do not invent credentials.
 3. **Decide the index-direction deviation** from §7: accept ascending feed indexes (MySQL 8 can scan them backwards) or add a follow-up migration with explicit `DESC` columns.
 4. **Resolve the search decision**: if keyword search over post bodies is required in V1, add a migration for `posts.content_text MEDIUMTEXT` plus a FULLTEXT index (not present now).
-5. **Milestone 3** (not started): install `bcrypt`/`argon2`, build the guarded first-Admin bootstrap script driven by env vars, implement login/current-user, and add authentication + role middleware. No admin script exists yet — deliberately deferred, since the guide places it in Milestone 3.
-6. **Clean up the disposable container** when no longer needed:
+5. **Authentication test data.** The isolated container `campus-kabar-auth-test` (port 3308, database `campus_kabar_test`) holds one Admin (`admin@test.local`) with a throwaway password known only to the operator. Credentials are not recorded in the repository.
+6. **Clean up the disposable containers** when no longer needed:
    ```bash
+   docker rm -f campus-kabar-auth-test
    docker rm -f campus-kabar-verify
    ```
 
@@ -526,7 +535,7 @@ Milestone 2 is complete and committed (`2a3eb31`). The Express foundation (§11)
 
 - This milestone was carried out only after explicit approval of the design.
 - Schema work ran against a disposable local MySQL container; no production or shared database was touched.
-- Milestone 2 was committed as `2a3eb31` on `feat/db-migrations`; nothing has been pushed.
+- Milestone 2 was committed as `2a3eb31` on `feat/db-migrations`. The Express foundation was committed as `bb1d321` on the same branch and merged into `develop` by PR #1 (`d055b53`). Milestone 3 Stage 1 is uncommitted on `feat/authentication`; nothing is pushed from that branch, and `main` is untouched.
 - No frontend work, no authentication, no content/media routes, and no Cloudinary integration were started. `GET /api/health` is the only route.
 
 ---
@@ -537,7 +546,7 @@ Milestone 2 is complete and committed (`2a3eb31`). The Express foundation (§11)
 
 | File | Purpose |
 | --- | --- |
-| `backend/src/config/env.js` | Single reader of environment variables. Loads `backend/.env` by absolute path, validates `NODE_ENV`, `PORT`, `DB_PORT` and `CORS_ORIGIN`, requires `DB_USER`/`DB_PASSWORD`/`DB_NAME`/`CORS_ORIGIN` in production, and exports a frozen `{ nodeEnv, isProduction, port, corsOrigins, db }`. Throws one error listing every problem. |
+| `backend/src/config/env.js` | Single reader of environment variables. Loads `backend/.env` by absolute path; validates `NODE_ENV`, `PORT`, `DB_PORT`, `CORS_ORIGIN`, `JWT_ACCESS_SECRET`, token lifetimes, cookie settings, and `TRUST_PROXY`; requires database credentials, CORS origin, and a ≥32-character JWT secret in production; exports a frozen `{ nodeEnv, isProduction, isTest, port, corsOrigins, db, trustProxy, auth }`. Throws one error listing every problem. Outside production a missing secret falls back to a fixed insecure development value, flagged by `auth.usingInsecureDevSecret` so the Knex CLI still runs without a `.env`. |
 | `backend/src/app.js` | Builds the Express app: `x-powered-by` disabled, CORS restricted to the configured origins, 1 MB JSON body limit, `GET /api/health`, JSON 404 handler, central error handler. Exports the app without starting a listener. |
 | `backend/src/server.js` | Owns the process lifecycle: loads config/app/Knex inside `try/catch`, listens on `env.port`, handles listen errors, and on SIGINT/SIGTERM closes the HTTP server and the Knex pool before exiting (forced exit after 10 s). |
 | `backend/knexfile.js` | Now imports `env.db` instead of reading `process.env` itself. Connection defaults, UTC pinning, pool size, migration and seed paths are unchanged. |
@@ -583,19 +592,86 @@ Verification used the disposable container on port 3307 through `DB_*` environme
 
 ---
 
-## 12. Uncommitted changes for the Express foundation
+## 12. Express foundation commit record (previously listed as uncommitted)
 
-Working tree after implementation; nothing in this list is committed.
+The Express foundation described in §11 is no longer pending. It was committed as `bb1d321` (`Add Express server foundation and health endpoint`, 8 files, +358/−46) on `feat/db-migrations` and merged into `develop` by PR #1, producing merge commit `d055b53`.
 
 ```
-M  backend/.env.example
-M  backend/knexfile.js
-M  backend/package.json
-M  docs/Campus-Kabar-Project-Guide.md
-M  docs/DEVELOPMENT_PROGRESS.md
-?? backend/src/app.js
-?? backend/src/config/env.js
-?? backend/src/server.js
+bb1d321 Add Express server foundation and health endpoint
+2a3eb31 Add MySQL schema and Knex migrations for Milestone 2
+d055b53 Merge pull request #1 from edusagarmatha-svg/feat/db-migrations
 ```
 
-`backend/src/config/env.js`, `backend/src/app.js`, and `backend/src/server.js` are new. `knexfile.js` keeps identical connection behaviour but sources values from `env.js`. The guide only gained the `GET /api/health` note in §11.
+`backend/src/config/env.js`, `backend/src/app.js`, and `backend/src/server.js` were added; `knexfile.js` kept identical connection behaviour but sourced its values from `env.js`. `main` remains at the initial commit `695b8e4`.
+
+---
+
+## 13. Milestone 3 Stage 1 — authentication foundation (implemented, uncommitted)
+
+### Approved decisions implemented
+
+- JWT access token (HS256, 15-minute default) returned in the JSON body and sent as `Authorization: Bearer`; no token in `localStorage`.
+- Opaque refresh token (7-day default, sliding) in an HttpOnly cookie; only its SHA-256 hash is stored.
+- Refresh rotation is session-scoped: every login gets a `session_id`, and a reused token revokes that session only.
+- bcrypt cost 12, minimum password length 12 (no character-class rules), generic login errors (login itself is Stage 2).
+- Cookie settings (`SameSite`, `Secure`, domain, name) and proxy trust are configurable; production requires a strong JWT secret.
+- Standardized `{ error: { code, message } }` responses and rate limiting are Stage 2/3 work, not yet wired.
+
+### Files changed in Stage 1
+
+| File | Change |
+| --- | --- |
+| `backend/src/config/env.js` | Adds `auth.accessSecret`, TTLs (seconds), cookie settings, `trustProxy`, `isTest`, and `usingInsecureDevSecret`; validates durations, `SameSite`/`Secure` combinations, cookie name, and production secret strength. |
+| `backend/.env.example` | Documents `JWT_ACCESS_SECRET`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `COOKIE_NAME`, `COOKIE_SAMESITE`, `COOKIE_SECURE`, `COOKIE_DOMAIN`, `TRUST_PROXY`. No values are committed. |
+| `backend/migrations/20261117090006_create_refresh_tokens.js` | Adds `users.last_login_at DATETIME(3) NULL` and the `refresh_tokens` table. Existing migrations are unchanged. |
+| `backend/src/scripts/create-admin.js` | Interactive first-Admin bootstrap: hidden password entry, ≥12 characters and ≤72 UTF-8 bytes, duplicate refusal (also inside a locking transaction), bcrypt cost 12, no secret logging. |
+| `backend/package.json` | Adds the `create-admin` script and the approved dependencies. |
+| `backend/package-lock.json` | Lockfile for the new packages. |
+| `docs/Campus-Kabar-Project-Guide.md` | Records the approved authentication decisions in §10 and §14. |
+| `docs/DEVELOPMENT_PROGRESS.md` | Corrects the stale branch/commit report and adds this section. |
+
+### `refresh_tokens` design
+
+| Column | Type | Purpose |
+| --- | --- | --- |
+| `id` | BIGINT UNSIGNED PK AI | Token row. |
+| `user_id` | BIGINT UNSIGNED NOT NULL | FK `users.id`, ON DELETE CASCADE. |
+| `session_id` | VARCHAR(36) NOT NULL | One value per login (`crypto.randomUUID`); reuse detection revokes this session only. Indexed. |
+| `token_hash` | VARCHAR(64) NOT NULL UNIQUE | SHA-256 hex; the plaintext token exists only in the cookie. |
+| `expires_at` | DATETIME(3) NOT NULL | Absolute rotation deadline (now + 7 days). |
+| `revoked_at` | DATETIME(3) NULL | Set on logout, rotation, or reuse detection. |
+| `replaced_by_id` | BIGINT UNSIGNED NULL | Self-FK (SET NULL) linking a rotated token to its successor. |
+| `created_at` | DATETIME(3) NOT NULL | `CURRENT_TIMESTAMP(3)`. |
+
+Indexes: `token_hash` (unique), `session_id`, `(user_id, expires_at)`, `expires_at`. `last_login_at` is nullable so existing rows and never-logged-in staff remain valid.
+
+### Verification performed (isolated database)
+
+A separate disposable MySQL 8.0.46 container (`campus-kabar-auth-test`, host port 3308, schema `campus_kabar_test`) was created with a random local password stored only in the operator shell (`/tmp`, mode 600). The existing development database and the earlier verification container were not modified.
+
+| Check | Result |
+| --- | --- |
+| `knex migrate:latest` on an empty schema | **Pass** — 6 migrations applied in one batch. |
+| Schema read-back | **Pass** — `refresh_tokens` has the columns, unique hash, indexes, and both FKs (`user_id` CASCADE, `replaced_by_id` SET NULL); `users.last_login_at` exists. |
+| `knex migrate:down 20261117090006_create_refresh_tokens.js` | **Pass** — table and column removed, existing user rows kept. |
+| `knex migrate:latest` again | **Pass** — migration re-applied without touching data. |
+| Admin bootstrap (valid input) | **Pass** — one row, `role=admin`, `is_active=1`, `$2b$12$` hash of 60 characters, `last_login_at` NULL. Password never appeared in terminal output. |
+| Second bootstrap run | **Pass** — refused (`an admin account already exists`), exit 1, still one user. |
+| Mismatched passwords | **Pass** — `Passwords do not match.`, exit 1, no row inserted. |
+| Short password (11 chars) | **Pass** — rejected with the 12-character minimum, exit 1, no row inserted. |
+| Duplicate email with an existing editor | **Pass** — rejected, exit 1, row count unchanged. |
+| No TTY (`< /dev/null`) | **Pass** — clear error, exit 1. This initially exited 0 because `readline` never resolves at EOF; an explicit terminal check fixed it. |
+| Env validation: production without secret, bad TTL, `SameSite=none` without `Secure`, short provided secret | **Pass** — each refuses to load. |
+| Dependency load on Node 22.23.4 | **Pass** — all seven packages load; `bcrypt@6.0.0` uses a prebuilt binary. |
+
+Not yet verified (belongs to later stages): login/refresh/logout behaviour, JWT signing, rotation transactions, Origin checks, rate limiting, and automated tests.
+
+### Known limitations and notes
+
+1. **Dev secret fallback.** Without `JWT_ACCESS_SECRET`, non-production processes use a fixed insecure secret. Production refuses to start; Stage 2 should log a startup warning when `auth.usingInsecureDevSecret` is true.
+2. **In-memory rate limiting** (Stage 2) applies per process and will not coordinate across multiple instances. Documented for future Redis/shared-store work.
+3. **Cookie topology.** Defaults are `SameSite=lax` and `Secure` in production; this works for `localhost:5173` → `localhost:4000` because ports are not part of the site. Cross-site deployment requires `SameSite=none` + `Secure` plus CSRF tokens, which must be implemented before enabling it.
+4. **MySQL DDL is not transactional.** An interrupted migration can leave a table without its `knex_migrations` row and the lock held. During verification, a 120-second tool timeout did exactly that on the disposable database; resetting the schema and rerunning fixed it. On a shared database, unlock with `UPDATE knex_migrations_lock SET is_locked = 0` only after confirming the migration's actual state.
+5. **Feed indexes remain ascending** (see §7); unchanged by this stage.
+6. **`npm audit` reports 2 moderate `minimatch` advisories** in the `nodemon` development chain. The suggested fix downgrades `nodemon` and is breaking, so it was not applied; there is no runtime exposure.
+7. **No `.env` exists.** The real team database is still unconfigured, so the app falls back to `127.0.0.1:3306` / `root` / empty password.

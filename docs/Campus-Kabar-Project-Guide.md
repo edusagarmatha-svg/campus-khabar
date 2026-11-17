@@ -287,8 +287,10 @@ discussed before changing it.
   Media storage           Cloudinary or suitable  Image, video, and
                           object storage          document files
 
-  Authentication          JWT + bcrypt (or        Staff authentication
-                          Argon2)                 and password hashing
+  Authentication          JWT access tokens +     Staff authentication
+                          opaque rotating         and password hashing
+                          refresh tokens, bcrypt
+                          (cost 12)
 
   Styling                 Tailwind CSS (optional) Consistent responsive
                                                   UI
@@ -643,8 +645,14 @@ CDN.
 
 Security is part of the implementation, not a final polish task.
 
--   Hash passwords with bcrypt or Argon2. Never store plaintext
-    passwords.
+-   Hash passwords with bcrypt (cost 12) or Argon2. Never store
+    plaintext passwords. Require at least 12 characters and do not
+    impose arbitrary character-class rules.
+-   Return short-lived JWT access tokens (15 minutes) in the response
+    body; keep them in frontend memory only, never in `localStorage`.
+-   Store refresh tokens as opaque, SHA-256-hashed rows, delivered in an
+    HttpOnly cookie, rotated on every use, and scoped to a login session
+    so reuse revokes only that session.
 -   Protect staff routes with authentication middleware.
 -   Enforce role permissions on the server for every protected
     operation.
@@ -653,9 +661,12 @@ Security is part of the implementation, not a final polish task.
     untrusted input.
 -   Configure CORS deliberately.
 -   Add rate limiting to login and other sensitive endpoints.
--   Use secure token handling. If using cookie-based authentication,
-    configure HttpOnly, Secure, SameSite, and CSRF protections
-    appropriately.
+-   Use secure token handling. Configure HttpOnly, Secure, and SameSite
+    on the refresh cookie, validate Origin/Referer on cookie-based
+    endpoints, and add CSRF tokens before using `SameSite=none` for a
+    cross-site deployment.
+-   Return errors as `{ "error": { "code", "message" } }` without stack
+    traces, database details, passwords, tokens, or internal errors.
 -   Validate uploads by size, allowed type, MIME, and content where
     practical.
 -   Keep secrets in environment variables.
@@ -727,10 +738,13 @@ reviewed, and committed before moving on.
 
 ### Milestone 3 --- Staff authentication and authorization
 
--   Create the first Admin account securely.
--   Implement login and current-user handling.
+-   Create the first Admin account securely through an interactive
+    bootstrap that refuses duplicates and never logs passwords.
+-   Implement login, refresh-token rotation, logout, and current-user
+    handling.
 -   Add authentication and role middleware.
--   Test unauthorized and forbidden requests.
+-   Rate-limit login attempts and test unauthorized, forbidden, expired,
+    rotated, and reused-token requests.
 
 ### Milestone 4 --- Content API
 
@@ -829,6 +843,23 @@ For each task:
     verifies the result.
 
 ## 14. Decisions Still to Confirm
+
+Resolved before Milestone 3 (authentication):
+
+-   JWT access tokens (15-minute expiry) returned in the JSON body and
+    sent as `Authorization: Bearer`; held in frontend memory only.
+-   Opaque refresh tokens (7-day sliding expiry) in an HttpOnly cookie;
+    only SHA-256 hashes are stored in MySQL, rotated transactionally on
+    every refresh. Reuse revokes the affected session via `session_id`.
+-   bcrypt cost 12; minimum password length 12; generic login errors for
+    unknown email, wrong password, and inactive accounts.
+-   Cookie `SameSite`/`Secure`/domain settings are configurable; the
+    current localhost topology uses `SameSite=lax`. Cross-site cookies
+    require CSRF protection first.
+-   Login rate limits: 10 attempts per IP and 5 per email per 15 minutes,
+    using an in-memory store (single-instance limitation recorded).
+-   No public registration, no Reader login, and no logout-all-devices
+    endpoint in Version 1.
 
 Resolved before Milestone 2:
 
