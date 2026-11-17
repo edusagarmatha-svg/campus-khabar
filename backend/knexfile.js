@@ -1,10 +1,14 @@
-require('dotenv').config();
-
 const path = require('node:path');
+
+const env = require('./src/config/env');
 
 /**
  * Shared Knex configuration for the CLI (migrations, seeds) and the
  * application pool.
+ *
+ * Connection settings come from `src/config/env.js`, the single place that
+ * loads `.env` and validates configuration, so the API and the Knex CLI can
+ * never drift apart.
  *
  * All timestamps are stored in UTC. The connection is pinned to +00:00 and
  * `timezone: 'Z'` tells mysql2 to read DATETIME values back as UTC, so the
@@ -12,11 +16,7 @@ const path = require('node:path');
  */
 function connection() {
   return {
-    host: process.env.DB_HOST || '127.0.0.1',
-    port: Number(process.env.DB_PORT || 3306),
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'campus_kabar',
+    ...env.db,
     charset: 'utf8mb4',
     timezone: 'Z',
     supportBigNumbers: true,

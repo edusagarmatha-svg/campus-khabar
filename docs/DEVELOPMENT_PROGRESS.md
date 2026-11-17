@@ -2,54 +2,51 @@
 
 **Date:** 17 November 2026
 **Branch:** `feat/db-migrations`
-**Scope covered:** Milestone 0 (design approval) and Milestone 2 (database foundation, verified)
-**Report status:** factual snapshot of the working tree and the verification database, updated after the verification run. Rollback, reseed, constraint enforcement, and the runtime pool were exercised.
+**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, committed `2a3eb31`), and the Express backend foundation (implemented, verified, not yet committed)
+**Report status:** factual snapshot of the working tree and the verification database. The Express server was started and stopped, its endpoints exercised, and its failure paths checked.
 
 ---
 
 ## Next Session Handoff
 
-**Read this section first.** Snapshot taken immediately before the Milestone 2 commit was requested.
+**Read this section first.** Snapshot taken after the Express foundation was verified and before it is committed.
 
 ### Status
 
 | Item | State |
 | --- | --- |
-| Branch / HEAD | `feat/db-migrations` / `695b8e4 initial commit` |
+| Branch / HEAD | `feat/db-migrations` / `2a3eb31` |
 | Milestone 0 — design | Complete; approved schema recorded in the guide §9 |
-| Milestone 2 — database foundation | Implemented and verified on a disposable MySQL 8 instance; **staged for commit, not committed** |
-| Milestone 1 — project foundation | Partial: Vite/React frontend exists; Express has dependencies but **no entry point or dev server** |
+| Milestone 1 — project foundation | Complete: React/Vite frontend template plus the Express API entry point |
+| Milestone 2 — database foundation | Implemented, verified, committed as `2a3eb31` |
+| Express backend foundation | Implemented and verified; **uncommitted working-tree changes** |
 | Milestones 3–8 | Not started |
 
-**Deliberately not done yet:** `.env` for the team's real database, staff authentication, any API route, Cloudinary integration, tags, `content_text` search, and a descending-index migration.
+**Deliberately not done yet:** `.env` for the team's real database, staff authentication, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration.
 
-**Do not redo:** the five migrations are written and verified in both directions; the seed is applied and idempotent; Knex is installed and configured. Running `migrate:latest` again on the verification database is a no-op, not a rebuild.
+**Do not redo:** the five migrations are written and verified in both directions; the seed is applied and idempotent; Knex is installed and configured; the Express app, server, and env loader exist and work. Running `migrate:latest` again on the verification database is a no-op, not a rebuild.
 
-### Next milestone: Express backend foundation
+### Next milestone: Milestone 3 — staff authentication and authorization
 
-Close the remaining Milestone 1 gap before starting staff auth. Scope:
+1. Create the first Admin account through a guarded, env-driven bootstrap script using bcrypt or Argon2; never seed a hardcoded password.
+2. Implement `POST /api/auth/login` and `GET /api/auth/me`, issuing JWTs with an expiry and rejecting inactive users.
+3. Add authentication and role middleware (`requireAuth`, `requireRole`) and protect management routes with it.
+4. Test 401 for missing or invalid tokens and 403 for insufficient roles.
 
-1. `backend/src/config/env.js` — load and validate required environment variables once, with no real secrets defaulted in code.
-2. `backend/src/app.js` — build the Express app: JSON body parsing, deliberate CORS configuration, minimal request logging, `GET /api/health` that runs `SELECT 1` through the shared Knex instance, a JSON 404 handler, and a central error handler that does not leak stack traces.
-3. `backend/src/server.js` — start HTTP on `PORT` (default 4000), fail clearly on startup errors, and close the Knex pool on `SIGINT`/`SIGTERM`.
-4. `backend/package.json` — add `dev` (`nodemon src/server.js`) and `start` (`node src/server.js`).
-5. Verify by starting the server and requesting the health endpoint with both working and deliberately broken database credentials; the failure must be a clear JSON response, not a crash.
-
-Out of scope for that milestone: auth, JWT, bcrypt, post/category/media routes, Cloudinary, and frontend changes.
+Out of scope until later milestones: posts/categories/media CRUD, Cloudinary, and frontend screens.
 
 ### Exact next steps
 
-1. Get final approval and commit the staged Milestone 2 changes (nothing is committed yet).
+1. Review and commit the Express foundation; nothing new is committed yet. Implementation details and evidence are in §11 and §12.
 2. Obtain the real `DB_*` values, create `backend/.env` (never committed), then run `npm run migrate` and `npm run seed` against that database.
-3. Build the Express foundation above and verify the health endpoint.
-4. Commit that as the backend-foundation milestone.
-5. Only then start Milestone 3 (staff authentication and authorization).
+3. Start Milestone 3 with the Admin bootstrap script, then login/current-user, then middleware.
+4. Update the project guide when auth decisions (token lifetime, header vs cookie) are approved.
 
 ### Remaining pre-commit tasks
 
-- Review the staged diff and confirm no credentials, local-only paths, or generated files are included.
+- Review the uncommitted diff (§12) and confirm no credentials, local-only paths, or generated files are included.
 - Decide whether to accept the ascending feed indexes or add a `DESC` migration (does not block the commit).
-- Commit with the prepared message once the user approves.
+- Commit the Express foundation once approved.
 
 ---
 
@@ -73,6 +70,10 @@ campus-khabar/
 │   ├── seeds/
 │   │   └── 001_initial_categories.js
 │   └── src/
+│       ├── app.js
+│       ├── server.js
+│       ├── config/
+│       │   └── env.js
 │       └── db/
 │           └── knex.js
 ├── frontend/            (unmodified Vite + React 19 template)
@@ -86,7 +87,7 @@ campus-khabar/
 | Layer | Technology | Status |
 | --- | --- | --- |
 | Frontend | React 19 + Vite 8, ESLint 10 | Untouched; still the default template |
-| Backend runtime | Node.js 22.23.4, Express 5 | Dependencies declared, no server file yet |
+| Backend runtime | Node.js 22.23.4, Express 5 | App, server entry point and `GET /api/health` implemented |
 | Database | MySQL 8 (verified against 8.0.46) | Schema implemented via migrations |
 | DB driver | `mysql2` 3.24.6 | Connection pool configured |
 | Migrations / query builder | Knex.js 3.3.0 | Added in this milestone |
@@ -112,6 +113,8 @@ campus-khabar/
 - Migrations: `backend/migrations`, table `knex_migrations`. Seeds: `backend/seeds`.
 
 `backend/src/db/knex.js` requires that config, selects `process.env.NODE_ENV || 'development'`, throws on an unknown environment, and exports a single shared Knex instance so the process uses one pool.
+
+`backend/src/config/env.js` is the single reader of environment variables. It loads `backend/.env` by absolute path, validates `NODE_ENV`, `PORT`, `DB_PORT`, and `CORS_ORIGIN`, requires the database credentials and CORS origin when `NODE_ENV=production`, and exposes a frozen config object. `knexfile.js` imports its `db` object, so the API and the Knex CLI cannot drift apart.
 
 ---
 
@@ -420,7 +423,7 @@ Tables present: `users`, `categories`, `media`, `posts`, `post_media`, plus `kne
 
 1. **Index sort direction.** The guide specifies `published_at DESC` in the feed indexes, but Knex's `table.index([...])` created them **ascending**
    (`idx_posts_public_feed (status, deleted_at, published_at, id)`, and the type/category/featured equivalents). MySQL 8 can scan an ascending index backwards for `ORDER BY published_at DESC, id DESC`, so the intended public-feed queries are still served, but the index is not literally descending. Decide whether to accept this or switch those three indexes to explicit `DESC` columns via `knex.raw()` in a follow-up migration.
-2. **Schema mutated before commit.** The approved design is documented in the guide and the code matches it, but nothing has been committed; the migrations exist only in the working tree.
+2. **Schema is committed.** The approved design is documented in the guide and the code matches it; the migrations are in commit `2a3eb31`.
 3. **Verified paths.** Rollback, reseed, constraint rejection, a valid post + `post_media` insert, and the runtime pool have all been exercised (§6). Still untested: behaviour against the team's real MySQL instance, concurrent writes, and load.
 4. **Runtime pool verified, but not configured for a real database.** `backend/src/db/knex.js` was loaded with the verification environment variables and worked. There is still no `.env`; without one the module falls back to `127.0.0.1:3306`, user `root`, empty password, which is not this database and will fail on the host instance.
 5. **Earlier partial state is gone.** The orphaned `posts` table and stale migration lock from the killed first attempt were resolved by dropping and recreating the verification database, so there is no lingering inconsistency in the verification DB.
@@ -456,7 +459,7 @@ Tables present: `users`, `categories`, `media`, `posts`, `post_media`, plus `kne
 
 `frontend/**` (still the default Vite template), `.gitignore` (already covers `node_modules`, `.env`, `.env.*`, `dist`, logs), and all backend source outside `src/db/`.
 
-Git state at report time — **staged for the first Milestone 2 commit, nothing committed**:
+Git state for the Milestone 2 commit (`2a3eb31`) — the working tree was clean immediately after:
 
 ```
 M  backend/package-lock.json
@@ -480,17 +483,13 @@ No `.env`, `node_modules`, database files, or Docker artifacts are tracked or st
 
 ## 9. Remaining tasks and exact next steps
 
-Milestone 2's schema, migrations, seeds, and constraint behaviour are now **verified on the disposable MySQL 8 instance** (§6). Remaining work, in order:
+Milestone 2 is complete and committed (`2a3eb31`). The Express foundation (§11) is implemented and verified, but **not committed**.
 
-1. **Configure the real database.** Create `backend/.env` from the example with the credentials the team actually uses:
-   ```bash
-   cd backend && cp .env.example .env   # then edit DB_* values
-   ```
-   The host MySQL on 3306 is still inaccessible to the current user (`root` is socket-auth-only and `sudo` needs a password), so verification continued against the container on 3307. Creating `.env` needs the real credentials; do not invent them.
-2. **Decide the index-direction deviation** from §7: accept ascending feed indexes (MySQL 8 can scan them backwards for the feed ordering) or add a follow-up migration with explicit `DESC` columns.
-3. **Resolve the search decision**: if keyword search over post bodies is required in V1, add a migration for `posts.content_text MEDIUMTEXT` plus a FULLTEXT index (not present now).
-4. **Commit** the milestone together with the guide update, once the user has verified the result.
-5. **Then Milestone 3** (not started): install `bcrypt`/`argon2`, build the guarded first-Admin bootstrap script driven by env vars, implement login/current-user, and add authentication + role middleware. No admin script exists yet — deliberately deferred, since the guide places it in Milestone 3.
+1. **Review and commit the Express foundation** (§12).
+2. **Configure the real database.** Create `backend/.env` from the example with the credentials the team actually uses (`cp .env.example .env`, then edit `DB_*`). The host MySQL on 3306 is still inaccessible to the current user (`root` is socket-auth-only and `sudo` needs a password), so all checks so far used the container on 3307. Do not invent credentials.
+3. **Decide the index-direction deviation** from §7: accept ascending feed indexes (MySQL 8 can scan them backwards) or add a follow-up migration with explicit `DESC` columns.
+4. **Resolve the search decision**: if keyword search over post bodies is required in V1, add a migration for `posts.content_text MEDIUMTEXT` plus a FULLTEXT index (not present now).
+5. **Milestone 3** (not started): install `bcrypt`/`argon2`, build the guarded first-Admin bootstrap script driven by env vars, implement login/current-user, and add authentication + role middleware. No admin script exists yet — deliberately deferred, since the guide places it in Milestone 3.
 6. **Clean up the disposable container** when no longer needed:
    ```bash
    docker rm -f campus-kabar-verify
@@ -527,5 +526,76 @@ Milestone 2's schema, migrations, seeds, and constraint behaviour are now **veri
 
 - This milestone was carried out only after explicit approval of the design.
 - Schema work ran against a disposable local MySQL container; no production or shared database was touched.
-- Nothing has been committed or pushed; the working tree holds all changes on `feat/db-migrations`.
-- No frontend work, no authentication, no API routes, and no Cloudinary integration were started.
+- Milestone 2 was committed as `2a3eb31` on `feat/db-migrations`; nothing has been pushed.
+- No frontend work, no authentication, no content/media routes, and no Cloudinary integration were started. `GET /api/health` is the only route.
+
+---
+
+## 11. Express backend foundation (implemented)
+
+### Files and purpose
+
+| File | Purpose |
+| --- | --- |
+| `backend/src/config/env.js` | Single reader of environment variables. Loads `backend/.env` by absolute path, validates `NODE_ENV`, `PORT`, `DB_PORT` and `CORS_ORIGIN`, requires `DB_USER`/`DB_PASSWORD`/`DB_NAME`/`CORS_ORIGIN` in production, and exports a frozen `{ nodeEnv, isProduction, port, corsOrigins, db }`. Throws one error listing every problem. |
+| `backend/src/app.js` | Builds the Express app: `x-powered-by` disabled, CORS restricted to the configured origins, 1 MB JSON body limit, `GET /api/health`, JSON 404 handler, central error handler. Exports the app without starting a listener. |
+| `backend/src/server.js` | Owns the process lifecycle: loads config/app/Knex inside `try/catch`, listens on `env.port`, handles listen errors, and on SIGINT/SIGTERM closes the HTTP server and the Knex pool before exiting (forced exit after 10 s). |
+| `backend/knexfile.js` | Now imports `env.db` instead of reading `process.env` itself. Connection defaults, UTC pinning, pool size, migration and seed paths are unchanged. |
+| `backend/package.json` | Adds `dev` (`nodemon src/server.js`) and `start` (`node src/server.js`); `main` now points at `src/server.js`. |
+| `backend/.env.example` | Adds `NODE_ENV`, `PORT`, `CORS_ORIGIN`; the `DB_*` keys are unchanged. |
+
+No new dependencies were installed: `express`, `cors`, and `dotenv` were already present.
+
+### Health contract
+
+`GET /api/health` runs `SELECT 1` through the shared Knex pool.
+
+```json
+// 200 OK
+{ "status": "ok", "service": "campus-kabar-api", "database": "up",
+  "uptime_seconds": 4, "timestamp": "2026-11-17T08:23:58.903Z" }
+
+// 503 Service Unavailable when the database cannot be reached
+{ "status": "error", "service": "campus-kabar-api", "database": "down",
+  "message": "Database health check failed", "timestamp": "2026-11-17T08:25:16.941Z" }
+```
+
+The database is part of the check so a process that cannot serve content is not reported as healthy. 5xx responses never include stack traces; the error is logged server-side only.
+
+### Verification results
+
+| Check | Result |
+| --- | --- |
+| `npm run dev` + `GET /api/health` | **Pass** — HTTP 200, `database: up`, JSON body above |
+| Configured port | **Pass** — `Listening on http://localhost:4000 (development)`, socket on `*:4000` |
+| CORS allow-list | **Pass** — `Access-Control-Allow-Origin: http://localhost:5173` for the configured origin |
+| Unknown route | **Pass** — HTTP 404 with JSON error body |
+| Database unreachable (`DB_PORT=3399`) | **Pass** — HTTP 503, `database: down`, process stayed alive |
+| Invalid `PORT` | **Pass** — exit 1, `PORT must be an integer between 1 and 65535; got "not-a-port"` |
+| Invalid `NODE_ENV` | **Pass** — exit 1, lists the allowed values |
+| Production without credentials | **Pass** — exit 1, lists all four missing variables |
+| SIGTERM via `npm run dev` | **Pass** — `SIGTERM received`, `database pool closed`, port released |
+| SIGINT via `npm start` path | **Pass** — exit code 0, port released, pool closed |
+| `knex migrate:latest` after refactor | **Pass** — `Already up to date` |
+| `knex seed:run` after refactor | **Pass** — ran, still 4 categories |
+
+Verification used the disposable container on port 3307 through `DB_*` environment variables. No `.env` file was created and no migration was changed.
+
+---
+
+## 12. Uncommitted changes for the Express foundation
+
+Working tree after implementation; nothing in this list is committed.
+
+```
+M  backend/.env.example
+M  backend/knexfile.js
+M  backend/package.json
+M  docs/Campus-Kabar-Project-Guide.md
+M  docs/DEVELOPMENT_PROGRESS.md
+?? backend/src/app.js
+?? backend/src/config/env.js
+?? backend/src/server.js
+```
+
+`backend/src/config/env.js`, `backend/src/app.js`, and `backend/src/server.js` are new. `knexfile.js` keeps identical connection behaviour but sources values from `env.js`. The guide only gained the `GET /api/health` note in §11.

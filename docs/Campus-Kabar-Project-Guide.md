@@ -693,6 +693,11 @@ unpublished content.
 Support pagination, filtering, sorting, and predictable validation
 errors.
 
+Implemented so far: `GET /api/health`, a public readiness endpoint that
+reports whether the API and its database connection are up. Staff
+authentication, content, category, media, and admin endpoints are not
+implemented yet.
+
 ## 12. Suggested Development Milestones
 
 Build incrementally. Each milestone should be implemented, run, tested,
