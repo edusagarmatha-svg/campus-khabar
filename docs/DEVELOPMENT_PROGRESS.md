@@ -1,9 +1,9 @@
 # Campus Kabar — Development Progress Report
 
 **Date:** 17 November 2026
-**Branch:** `feat/authentication` (HEAD `8fbdf4d`)
-**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap, committed as `8fbdf4d`), and Stage 2 of Milestone 3 (auth endpoints, middleware, wiring — implemented and verified, uncommitted)
-**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. Stage 1 is committed on `feat/authentication`; not pushed.
+**Branch:** `feat/authentication` (HEAD `fd429a0`, pushed to origin)
+**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap, committed as `8fbdf4d`), and Stage 2 of Milestone 3 (auth endpoints, middleware, wiring — implemented, verified, committed as `fd429a0`, and pushed to origin)
+**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. Stage 1 and Stage 2 are committed on `feat/authentication` and pushed to origin.
 
 ---
 
@@ -21,10 +21,10 @@
 | Milestone 2 — database foundation | Implemented, verified, committed as `2a3eb31` |
 | Express backend foundation | Implemented, verified, committed as `bb1d321`; merged into `develop` by PR #1 (`d055b53`) |
 | Milestone 3 — Stage 1 | **Implemented, verified, committed as `8fbdf4d`** |
-| Milestone 3 — Stage 2 | **Implemented, verified, uncommitted** (endpoints, middleware, wiring; see §14) |
+| Milestone 3 — Stage 2 | **Implemented, verified, committed as `fd429a0`, and pushed** (endpoints, middleware, wiring; see §14) |
 | Milestone 3 — Stage 3 | Not started (content/media CRUD, Cloudinary, frontend screens) |
 
-**Deliberately not done yet:** `.env` for the team's real database, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration. (Auth routes/middleware are implemented in Stage 2 but uncommitted.)
+**Deliberately not done yet:** content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
 
 **Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
@@ -47,10 +47,10 @@ Out of scope until later milestones: posts/categories/media CRUD, Cloudinary, fr
 
 ### Exact next steps
 
-1. Stage 1 is committed as `8fbdf4d`; Stage 2 is implemented and verified but **uncommitted**. Review the diff and commit on `feat/authentication` (no push) when accepted.
+1. Stage 1 (`8fbdf4d`) and Stage 2 (`fd429a0`) are committed on `feat/authentication` and pushed to origin. Authentication verified: 30/30 tests pass.
 2. Stage 2 (auth endpoints + middleware) is complete and verified against the disposable test DB (30/30 tests pass). See §14.
 3. Keep the authentication test database (container `campus-kabar-auth-test`, port 3308) disposable. Its credentials live only in the local shell, never in the repository or this document.
-4. Obtain the real `DB_*` values and create `backend/.env` (never committed) before running against the team database. The current `.env` points at the disposable test DB and must be replaced.
+4. Real `backend/.env` is configured for `campus_kabar` on 127.0.0.1:3306 (gitignored, never committed); test runs override env vars to the disposable 3308 DB.
 
 ---
 
@@ -733,7 +733,7 @@ Wires the Stage 1 service/token layer into the HTTP surface. No new database cha
 
 ### Remaining limitations
 
-- No `backend/.env` for the real team database; the test `.env` must be replaced before running against shared data.
+- Real development `.env` is configured for `campus_kabar` on 127.0.0.1:3306 (initialized, migrated, seeded); test runs override env vars to the disposable 3308 DB.
 - Content/media CRUD, Cloudinary, tags, `content_text` search, and the descending-index migration are untouched.
 - Rate limiting is in-memory per process and will not coordinate across instances.
 - Cookie defaults are `SameSite=lax` + `Secure` in production; cross-site deployment still needs `SameSite=none` + CSRF strategy.
