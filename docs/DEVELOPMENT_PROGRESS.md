@@ -1,9 +1,9 @@
 # Campus Kabar — Development Progress Report
 
 **Date:** 17 November 2026
-**Branch:** `feat/authentication` (HEAD `d055b53`)
-**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), and Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap)
-**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. No Stage 1 work is committed yet.
+**Branch:** `feat/authentication` (HEAD `8fbdf4d`)
+**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap, committed as `8fbdf4d`), and Stage 2 of Milestone 3 (auth endpoints, middleware, wiring — implemented and verified, uncommitted)
+**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. Stage 1 is committed on `feat/authentication`; not pushed.
 
 ---
 
@@ -15,15 +15,16 @@
 
 | Item | State |
 | --- | --- |
-| Branch / HEAD | `feat/authentication` / `d055b53` (no upstream yet; not pushed) |
+| Branch / HEAD | `feat/authentication` / `8fbdf4d` (no upstream yet; not pushed) |
 | Milestone 0 — design | Complete; approved schema recorded in the guide §9 |
 | Milestone 1 — project foundation | Complete: React/Vite frontend template plus the Express API entry point |
 | Milestone 2 — database foundation | Implemented, verified, committed as `2a3eb31` |
 | Express backend foundation | Implemented, verified, committed as `bb1d321`; merged into `develop` by PR #1 (`d055b53`) |
-| Milestone 3 — Stage 1 | **Implemented and verified; uncommitted** (see §13) |
-| Milestone 3 — Stages 2–3 | Not started |
+| Milestone 3 — Stage 1 | **Implemented, verified, committed as `8fbdf4d`** |
+| Milestone 3 — Stage 2 | **Implemented, verified, uncommitted** (endpoints, middleware, wiring; see §14) |
+| Milestone 3 — Stage 3 | Not started (content/media CRUD, Cloudinary, frontend screens) |
 
-**Deliberately not done yet:** `.env` for the team's real database, auth routes/middleware, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration.
+**Deliberately not done yet:** `.env` for the team's real database, content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration. (Auth routes/middleware are implemented in Stage 2 but uncommitted.)
 
 **Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
@@ -46,10 +47,10 @@ Out of scope until later milestones: posts/categories/media CRUD, Cloudinary, fr
 
 ### Exact next steps
 
-1. Review the Stage 1 diff and commit it on `feat/authentication` (no push to `develop`/`main`; open a PR when the milestone is ready).
-2. Start Stage 2; do not begin until Stage 1 is accepted.
+1. Stage 1 is committed as `8fbdf4d`; Stage 2 is implemented and verified but **uncommitted**. Review the diff and commit on `feat/authentication` (no push) when accepted.
+2. Stage 2 (auth endpoints + middleware) is complete and verified against the disposable test DB (30/30 tests pass). See §14.
 3. Keep the authentication test database (container `campus-kabar-auth-test`, port 3308) disposable. Its credentials live only in the local shell, never in the repository or this document.
-4. Obtain the real `DB_*` values and create `backend/.env` (never committed) before running against the team database.
+4. Obtain the real `DB_*` values and create `backend/.env` (never committed) before running against the team database. The current `.env` points at the disposable test DB and must be replaced.
 
 ---
 
@@ -675,3 +676,65 @@ Not yet verified (belongs to later stages): login/refresh/logout behaviour, JWT 
 5. **Feed indexes remain ascending** (see §7); unchanged by this stage.
 6. **`npm audit` reports 2 moderate `minimatch` advisories** in the `nodemon` development chain. The suggested fix downgrades `nodemon` and is breaking, so it was not applied; there is no runtime exposure.
 7. **No `.env` exists.** The real team database is still unconfigured, so the app falls back to `127.0.0.1:3306` / `root` / empty password.
+
+---
+
+## 14. Milestone 3 Stage 2 — endpoints and middleware (implemented, uncommitted)
+
+### Scope
+
+Wires the Stage 1 service/token layer into the HTTP surface. No new database changes; no frontend work.
+
+### Files added
+
+| File | Purpose |
+| --- | --- |
+| `backend/src/middleware/authenticate.js` | `authenticate` (Bearer JWT, loads user + role from MySQL; never trusts the JWT role claim) and `authorize(...roles)` (DB-role based). |
+| `backend/src/middleware/origin.js` | `validateOrigin` for cookie routes: rejects a present but disallowed `Origin`. |
+| `backend/src/middleware/rateLimit.js` | `authRateLimiter` (15 min window, 20 req in prod, 100000 in test). |
+| `backend/src/middleware/validate.js` | `validateBody(schema)` zod-based request validation → `VALIDATION_ERROR`. |
+| `backend/src/controllers/authController.js` | `login`, `refresh`, `logout`, `me`; cookie set/clear helpers. |
+| `backend/src/routes/authRoutes.js` | Wires the four endpoints with validation, Origin, and auth middleware. |
+| `backend/tests/authHttp.test.js` | 16 HTTP-level tests (endpoints, middleware, cookies, Origin, authorization, rate-limit headers). |
+
+### Files modified
+
+| File | Change |
+| --- | --- |
+| `backend/src/app.js` | `trust proxy`, `helmet`, credential-aware CORS, `cookie-parser`, mount `/api/auth`, error handler preserves `HttpError.code`. |
+| `backend/package.json` | `test` script → `node --test tests/*.test.js`. |
+| `docs/DEVELOPMENT_PROGRESS.md` | This section. |
+
+### Endpoints
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| POST | `/api/auth/login` | none (rate-limited) | Validates body; generic `INVALID_CREDENTIALS` on any failure; sets HttpOnly refresh cookie; returns `{ accessToken, user }`. |
+| POST | `/api/auth/refresh` | Origin check | Rotates refresh token in a transaction; reuse revokes only the affected session; returns new access token + cookie. |
+| POST | `/api/auth/logout` | Origin check | Revokes the session (idempotent); clears cookie; `204`. |
+| GET | `/api/auth/me` | Bearer access token | Loads user from MySQL; returns `{ user }`. |
+
+### Security behavior
+
+- Access tokens are short-lived JWTs (HS256) returned in the JSON body only; refresh tokens are opaque, random, stored only as SHA-256 hashes in an HttpOnly cookie.
+- `authenticate` verifies the JWT signature but loads `id`/`name`/`email`/`role`/`is_active` from MySQL; the JWT role claim is never used for authorization.
+- `authorize(...)` checks the DB-loaded role.
+- Refresh rotation uses `SELECT ... FOR UPDATE` and per-session reuse revocation (only the affected session).
+- Generic login errors prevent user enumeration; inactive accounts receive the same error as bad passwords.
+- Origin validation rejects present-but-disallowed origins on cookie routes.
+- Rate limiting is applied to all `/api/auth` routes (disabled-in-effect in test mode via a high limit).
+- Secrets are never logged; `.env` is gitignored and currently points at the disposable test DB.
+
+### Test results
+
+- Environment: disposable `campus-kabar-auth-test` (127.0.0.1:3308, database `campus_kabar_test`), `NODE_ENV=test`.
+- `npm test` (node:test): **30 tests, 30 pass, 0 fail** (13 service/token tests + 17 HTTP tests).
+- Coverage includes token sign/verify/tamper, refresh hashing, credential verification, session creation, rotation, reuse (session-scoped), expiry, invalid token, revoke idempotency, concurrency, login/refresh/logout/me endpoints, cookie attributes, Origin allow/deny, authorization (DB role), rate-limit headers, error response shape, and validation.
+
+### Remaining limitations
+
+- No `backend/.env` for the real team database; the test `.env` must be replaced before running against shared data.
+- Content/media CRUD, Cloudinary, tags, `content_text` search, and the descending-index migration are untouched.
+- Rate limiting is in-memory per process and will not coordinate across instances.
+- Cookie defaults are `SameSite=lax` + `Secure` in production; cross-site deployment still needs `SameSite=none` + CSRF strategy.
+- `npm audit` reports 2 moderate `minimatch` advisories in the nodemon dev chain (not applied).
