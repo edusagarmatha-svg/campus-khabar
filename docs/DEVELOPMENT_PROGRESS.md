@@ -739,3 +739,59 @@ Wires the Stage 1 service/token layer into the HTTP surface. No new database cha
 - Rate limiting is in-memory per process and will not coordinate across instances.
 - Cookie defaults are `SameSite=lax` + `Secure` in production; cross-site deployment still needs `SameSite=none` + CSRF strategy.
 - `npm audit` reports 2 moderate `minimatch` advisories in the nodemon dev chain (not applied).
+
+## 15. Milestone 6 Phase 0 — minimal staff user management (implemented, uncommitted)
+
+### Scope
+- Added admin-only user management endpoints:
+  - `GET /api/users`
+  - `GET /api/users/:id`
+  - `POST /api/users`
+  - `PATCH /api/users/:id`
+- Staff creation/update validates name, email, password, role, and active status.
+- Passwords are hashed with bcrypt (cost 12); password hashes and sensitive auth fields are never returned.
+- Prevents accidental self-deactivation and loss of the last active admin.
+- Enforces admin authorization through existing `authenticate` + `authorize('admin')`.
+
+### Files added
+- `backend/src/services/userService.js`
+- `backend/src/controllers/userController.js`
+- `backend/src/routes/userRoutes.js`
+- `backend/tests/users.test.js`
+
+### Files modified
+- `backend/src/app.js` (mounted `/api/users`)
+
+### Test results
+- Environment: disposable `campus-kabar-test` (127.0.0.1:3308, database `campus_kabar_test`), `NODE_ENV=test`.
+- `node --test tests/users.test.js`: **7 tests, 7 pass, 0 fail**.
+- Coverage includes unauthenticated/non-admin rejection, create, duplicate email, invalid password, list/get, update, self-deactivation, and last-active-admin protection.
+
+### Remaining limitations
+- Staff management frontend (Milestone 6 later phases) is not implemented yet.
+- Email uniqueness and role changes are validated in service; no password reset or invitation flow is included.
+
+## 16. Milestone 6 — staff/admin interface (frontend, implemented, uncommitted)
+
+### Scope
+- Replaced the Vite starter template with a routed staff console.
+- Added auth session bootstrap, in-memory access token, single-flight refresh, and protected routes preserving the originally requested path.
+- Added category management UI.
+- Added posts management UI: list, create/edit, status changes, soft delete.
+- Added TipTap rich-text editor with mediaId-preserving image nodes and inline/cover media selection.
+- Added Cloudinary signed upload flow and media library UI.
+- Added staff management UI for admins.
+- Added responsive layout and reusable UI states.
+
+### Files added/modified
+- Frontend app shell, routing, auth context, API clients, pages, editor, and components under `frontend/src/`.
+- Backend test concurrency set to 1 in `backend/package.json` for DB isolation.
+
+### Verification
+- Frontend: `npm run build` passes.
+- Backend: `npm test` on isolated test DB (port 3308): **54 tests, 54 pass, 0 fail**.
+
+### Remaining limitations
+- No automated frontend tests; verification is build plus manual flow.
+- Bundle size warning (>500 kB) due to TipTap; code splitting can be added later.
+- Public portal (Milestone 7) and deployment hardening (Milestone 8) remain.

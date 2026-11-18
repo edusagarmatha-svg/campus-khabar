@@ -9,6 +9,7 @@ const authRoutes = require('./routes/authRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const postRoutes = require('./routes/postRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const userRoutes = require('./routes/userRoutes');
 
 const app = express();
 
@@ -62,6 +63,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/users', userRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
