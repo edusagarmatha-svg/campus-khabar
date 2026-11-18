@@ -22,9 +22,10 @@
 | Express backend foundation | Implemented, verified, committed as `bb1d321`; merged into `develop` by PR #1 (`d055b53`) |
 | Milestone 3 — Stage 1 | **Implemented, verified, committed as `8fbdf4d`** |
 | Milestone 3 — Stage 2 | **Implemented, verified, committed as `fd429a0`, and pushed** (endpoints, middleware, wiring; see §14) |
-| Milestone 3 — Stage 3 (content CRUD) | **Implemented, verified** (categories + posts API, 40/40 tests pass); not committed/pushed pending review |
+| Milestone 3 — Stage 3 (content CRUD) | **Implemented, verified, committed** (categories + posts API) |
+| Milestone 5 — Media management (Cloudinary) | **Implemented, verified** (signed uploads, listing, deletion, references, 47/47 tests pass); not committed/pushed pending review |
 
-**Deliberately not done yet:** media upload/Cloudinary integration, frontend screens, tags, `content_text` search, and a descending-index migration. Content management CRUD (categories + posts) is now implemented in Stage 3 and verified against the disposable test DB. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
+**Deliberately not done yet:** frontend screens, tags, `content_text` search, and a descending-index migration. Content management CRUD (categories + posts) is implemented in Stage 3. Media management with Cloudinary signed uploads, validation, listing, deletion, and post references is implemented in Stage 5 and verified against the disposable test DB. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
 
 **Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
