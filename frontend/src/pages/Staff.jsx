@@ -62,7 +62,13 @@ export default function Staff() {
 
   return (
     <section>
-      <h1>Staff</h1>
+      <div className="page-heading">
+        <div>
+          <h1>Staff</h1>
+          <p className="text-muted">Manage editor and admin accounts for the newsroom.</p>
+        </div>
+      </div>
+
       {error && <p className="error-text">{error}</p>}
 
       <form onSubmit={handleCreate} className="editor-form">
@@ -76,34 +82,59 @@ export default function Staff() {
             <option value="admin">Admin</option>
           </select>
         </label>
-        <button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Create'}</button>
+        <div className="form-actions">
+          <button type="submit" className="button" disabled={saving}>
+            {saving ? 'Creating…' : 'Create account'}
+          </button>
+        </div>
       </form>
 
-      <table className="data-table">
-        <thead>
-          <tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Actions</th></tr>
-        </thead>
-        <tbody>
-          {items.map((u) => (
-            <tr key={u.id}>
-              <td>{u.name}</td>
-              <td>{u.email}</td>
-              <td>
-                <select value={u.role} onChange={(e) => changeRole(u, e.target.value)} disabled={u.id === user?.id}>
-                  <option value="editor">Editor</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </td>
-              <td>{u.is_active ? 'Yes' : 'No'}</td>
-              <td>
-                <button onClick={() => toggleActive(u)} disabled={u.id === user?.id}>
-                  {u.is_active ? 'Deactivate' : 'Activate'}
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {items.length === 0 ? (
+        <div className="empty-state">
+          <p>No staff accounts.</p>
+        </div>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {items.map((u) => (
+                <tr key={u.id}>
+                  <td className="cell-title">{u.name}</td>
+                  <td>{u.email}</td>
+                  <td>
+                    <select
+                      value={u.role}
+                      onChange={(e) => changeRole(u, e.target.value)}
+                      disabled={u.id === user?.id}
+                    >
+                      <option value="editor">Editor</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </td>
+                  <td>
+                    <span className={`badge ${u.is_active ? 'badge--success' : 'badge--muted'}`}>
+                      {u.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="row-actions">
+                    <button
+                      type="button"
+                      className={`button button--small ${u.is_active ? 'button--secondary' : ''}`}
+                      onClick={() => toggleActive(u)}
+                      disabled={u.id === user?.id}
+                    >
+                      {u.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

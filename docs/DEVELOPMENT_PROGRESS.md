@@ -950,3 +950,37 @@ Unavailable actions: no user deletion endpoint (only create/update/activate/deac
 - Down migration cannot restore the old CHECK if rows already use the new statuses; production rollback needs data cleanup first.
 - The review queue is capped at 100 items in the UI (no pagination control yet).
 - Rate limiting remains single-instance, as recorded in §18.
+
+## 20. Cloudinary "Invalid Signature" investigation, dashboard fix, and admin UI polish (implemented, uncommitted)
+
+### Cloudinary investigation (read-only; no credentials printed)
+
+- Reported error: `Invalid Signature`; reported string to sign `allowed_formats=jpg,jpeg,png,webp&folder=campus-kabar/dev/image&timestamp=1794996843`.
+- `generateUploadSignature()` in `backend/src/services/cloudinaryService.js` signs exactly `{ timestamp, folder, allowed_formats }` via `cloudinary.utils.api_sign_request`. Reproducing the reported canonical string byte-for-byte produced an identical string, so parameter sorting, encoding, exclusions (`file`, `api_key`, `resource_type`, `cloud_name`), and timestamp handling are correct. The frontend (`frontend/src/api/media.js`) posts exactly the signed parameters plus unsigned `file` and `api_key`, with no extra unsigned fields.
+- `backend/src/config/env.js` loads `.env` by absolute path, lets process env win, and trims values; the secret is never sent to the frontend. No shell override or second `.env` file was present.
+- Root cause: **credential configuration, not an implementation bug.** `CLOUDINARY_API_SECRET` in `backend/.env` was byte-identical to `CLOUDINARY_API_KEY` (15 digits) instead of the 27-character API secret. A read-only Cloudinary Admin API check (`GET .../resources/image`) returned `401 {"error":{"message":"api_secret mismatch"}}`, which also confirms the cloud name and API key themselves are valid. The running dev server (started 15:58:48) also held a stale `.env` snapshot (`.env` edited 16:00:21), so even a corrected file would not take effect until restart.
+- No files were modified by the investigation. Fix is operational: replace the secret with the real value from the Cloudinary console and restart the backend. Do not print or log the secret.
+
+### Dashboard API error
+
+- Symptom: `No route for GET /api/admin/dashboard`.
+- Investigation: the route and mount (`app.use('/api/admin/dashboard', dashboardRoutes)`) exist and are correct; the frontend URL matches. The actual failure was a `500 ER_BAD_FIELD_ERROR`: `dashboardService` selected `p.submitted_at`, but the dev database `campus_kabar` (on 127.0.0.1:3306) had not yet had migration `20261119000001_add_editorial_review_workflow.js` applied, so `posts.submitted_at` did not exist. `knex migrate:status` showed one pending migration.
+- Fix: ran `npm run migrate` against the development database (batch 2, 1 migration). No schema redesign; this applies the already-authored migration the code depends on.
+- Verification: `GET /api/admin/dashboard` now returns `200` with role-appropriate data for both Admin (includes `staff.active`) and Editor (`staff` omitted); unauthenticated requests return `401`.
+
+### Admin UI consistency and polish
+
+- Preserved the existing palette, sidebar, layout, and tokens; no public-portal changes.
+- `frontend/src/index.css`: enhanced `.button` (inline-flex, consistent min-height, transitions, focus-visible ring, active state, disabled styling), added `.button--ghost`, shared form-control styling for inputs/selects/textareas across `.editor-form`, `.toolbar`, `.inline-form`, `.auth-card`, `.feedback-form`, `.modal-card`, and `.field` with focus rings and disabled states, label spacing, modal spacing, responsive `.form-row` collapse, responsive toolbar/row-actions, and consistent modal presentation.
+- `frontend/src/pages/Categories.jsx`: page-heading, styled buttons, status badges, table-scroll wrapper, empty state.
+- `frontend/src/pages/Staff.jsx`: page-heading, styled create button, role selects, active badges, table-scroll, empty state, row-actions.
+- `frontend/src/pages/MediaLibrary.jsx`: page-heading, destructive delete button styling, empty state.
+- `PostEditor`, `Login`, `MediaPicker`, `Dashboard`, `PostsList`, `ReviewQueue` already used the shared primitives; their controls now inherit the improved focus/disabled styling.
+
+### Verification
+
+- Backend full suite: `67 tests, 67 pass, 0 fail` on the disposable test DB (3308) when Cloudinary vars are unset (the intended unconfigured test setup; the single env-dependent media test fails only if `.env` carries Cloudinary values, and passes with the vars cleared). No code change was needed for this.
+- Frontend: `npm run build` passes (bundle-size warning only); `npm run lint` reports only the pre-existing issues in `api/client.js`, `AuthContext.jsx`, `MediaPicker.jsx`, `pages/Categories.jsx`, `pages/MediaLibrary.jsx`, `pages/Staff.jsx`.
+- Dashboard endpoint verified live with Admin and Editor tokens (200 + data) and unauthenticated (401).
+- Migration status on dev DB: 7 completed, 0 pending.
+- No credentials, schema redesigns, public-portal changes, commits, or pushes were made. Cloudinary secret still needs replacement in `.env` followed by a backend restart.
