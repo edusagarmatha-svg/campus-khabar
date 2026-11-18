@@ -1,7 +1,7 @@
 # Campus Kabar — Development Progress Report
 
 **Date:** 17 November 2026
-**Branch:** `feat/authentication` (HEAD `fd429a0`, pushed to origin)
+**Branch:** `feat/content-management` (HEAD `a0cf68c`; doc-only correction committed on this branch)
 **Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap, committed as `8fbdf4d`), and Stage 2 of Milestone 3 (auth endpoints, middleware, wiring — implemented, verified, committed as `fd429a0`, and pushed to origin)
 **Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. Stage 1 and Stage 2 are committed on `feat/authentication` and pushed to origin.
 
@@ -22,9 +22,9 @@
 | Express backend foundation | Implemented, verified, committed as `bb1d321`; merged into `develop` by PR #1 (`d055b53`) |
 | Milestone 3 — Stage 1 | **Implemented, verified, committed as `8fbdf4d`** |
 | Milestone 3 — Stage 2 | **Implemented, verified, committed as `fd429a0`, and pushed** (endpoints, middleware, wiring; see §14) |
-| Milestone 3 — Stage 3 | Not started (content/media CRUD, Cloudinary, frontend screens) |
+| Milestone 3 — Stage 3 (content CRUD) | **Implemented, verified** (categories + posts API, 40/40 tests pass); not committed/pushed pending review |
 
-**Deliberately not done yet:** content/media API routes, Cloudinary integration, tags, `content_text` search, and a descending-index migration. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
+**Deliberately not done yet:** media upload/Cloudinary integration, frontend screens, tags, `content_text` search, and a descending-index migration. Content management CRUD (categories + posts) is now implemented in Stage 3 and verified against the disposable test DB. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
 
 **Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
