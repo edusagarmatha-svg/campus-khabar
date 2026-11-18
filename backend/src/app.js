@@ -1,17 +1,33 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 
 const env = require('./config/env');
 const db = require('./db/knex');
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
+
+// Respect X-Forwarded-* headers per configuration (needed behind a proxy).
+app.set('trust proxy', env.trustProxy);
 
 // Do not advertise the framework in responses.
 app.disable('x-powered-by');
 
-// Only the configured frontend origins may call the API from a browser.
-app.use(cors({ origin: env.corsOrigins }));
+// Security headers.
+app.use(helmet());
 
+// Only the configured frontend origins may call the API from a browser, with
+// credentials so the HttpOnly refresh-token cookie is sent.
+app.use(
+  cors({
+    origin: env.corsOrigins,
+    credentials: true,
+  }),
+);
+
+app.use(cookieParser());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
 
@@ -39,6 +55,8 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.use('/api/auth', authRoutes);
+
 app.use((req, res) => {
   res.status(404).json({
     error: {
@@ -55,6 +73,9 @@ app.use((error, req, res, next) => {
   }
 
   const status = Number.isInteger(error.status) ? error.status : 500;
+  const code =
+    (typeof error.code === 'string' && error.code) ||
+    (status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR');
 
   if (status >= 500) {
     console.error('[api] unhandled error:', error);
@@ -62,9 +83,11 @@ app.use((error, req, res, next) => {
 
   res.status(status).json({
     error: {
-      code: status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR',
+      code,
       message:
-        status >= 500 ? 'An unexpected error occurred' : error.message,
+        status >= 500
+          ? 'An unexpected error occurred'
+          : error.message || 'Request failed',
     },
   });
 });
