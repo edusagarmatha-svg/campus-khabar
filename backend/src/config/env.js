@@ -226,6 +226,25 @@ function readTrustProxy() {
 
 const trustProxy = readTrustProxy();
 
+// --- Cloudinary (media storage) ------------------------------------------
+// All three values are required to enable uploads. When any is missing the
+// media endpoints report "not configured" instead of crashing startup, so
+// local development and tests work without Cloudinary credentials.
+const cloudinaryCloudName = (process.env.CLOUDINARY_CLOUD_NAME || '').trim();
+const cloudinaryApiKey = (process.env.CLOUDINARY_API_KEY || '').trim();
+const cloudinaryApiSecret = (process.env.CLOUDINARY_API_SECRET || '').trim();
+const cloudinaryFolder = (process.env.CLOUDINARY_UPLOAD_FOLDER || 'campus-kabar').trim();
+
+const cloudinaryConfigured = Boolean(
+  cloudinaryCloudName && cloudinaryApiKey && cloudinaryApiSecret,
+);
+
+if (isProduction && !cloudinaryConfigured) {
+  errors.push(
+    'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are required when NODE_ENV=production',
+  );
+}
+
 if (errors.length > 0) {
   throw new Error(
     `Invalid environment configuration:\n  - ${errors.join('\n  - ')}`,
@@ -257,5 +276,12 @@ module.exports = Object.freeze({
       domain: cookieDomain,
       maxAgeMs: refreshTokenTtlSeconds * 1000,
     }),
+  }),
+  cloudinary: Object.freeze({
+    configured: cloudinaryConfigured,
+    cloudName: cloudinaryCloudName,
+    apiKey: cloudinaryApiKey,
+    apiSecret: cloudinaryApiSecret,
+    folder: cloudinaryFolder,
   }),
 });

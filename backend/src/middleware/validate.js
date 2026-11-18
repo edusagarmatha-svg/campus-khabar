@@ -14,4 +14,17 @@ function validateBody(schema) {
   };
 }
 
-module.exports = { validateBody };
+function validateQuery(schema) {
+  return (req, res, next) => {
+    try {
+      req.query = schema.parse(req.query || {});
+      next();
+    } catch (error) {
+      const issue = (error.issues && error.issues[0]) || {};
+      const message = issue.message || 'Invalid query parameters';
+      next(httpError(400, 'VALIDATION_ERROR', message));
+    }
+  };
+}
+
+module.exports = { validateBody, validateQuery };
