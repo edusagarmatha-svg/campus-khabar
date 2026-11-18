@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
@@ -21,7 +21,7 @@ const MediaImage = Image.extend({
   },
 });
 
-const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange }, ref) {
+const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange, editable = true }, ref) {
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -30,10 +30,15 @@ const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange }, ref
       Placeholder.configure({ placeholder: 'Write your content…' }),
     ],
     content: content || { type: 'doc', content: [{ type: 'paragraph' }] },
+    editable,
     onUpdate: ({ editor }) => {
       onChange(editor.getJSON());
     },
   });
+
+  useEffect(() => {
+    editor?.setEditable(editable !== false);
+  }, [editor, editable]);
 
   useImperativeHandle(ref, () => ({
     insertImage(media) {
@@ -48,10 +53,10 @@ const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange }, ref
   return (
     <div className="editor">
       <div className="editor-toolbar">
-        <button type="button" onClick={() => editor?.chain().focus().toggleBold().run()}>Bold</button>
-        <button type="button" onClick={() => editor?.chain().focus().toggleItalic().run()}>Italic</button>
-        <button type="button" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
-        <button type="button" onClick={() => editor?.chain().focus().toggleBulletList().run()}>List</button>
+        <button type="button" disabled={!editable} onClick={() => editor?.chain().focus().toggleBold().run()}>Bold</button>
+        <button type="button" disabled={!editable} onClick={() => editor?.chain().focus().toggleItalic().run()}>Italic</button>
+        <button type="button" disabled={!editable} onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}>H2</button>
+        <button type="button" disabled={!editable} onClick={() => editor?.chain().focus().toggleBulletList().run()}>List</button>
       </div>
       <EditorContent editor={editor} />
     </div>
@@ -59,4 +64,3 @@ const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange }, ref
 });
 
 export default TipTapEditor;
-EOF

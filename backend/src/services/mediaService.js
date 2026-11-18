@@ -130,9 +130,21 @@ async function registerUploadedMedia(user, payload) {
 async function getMediaReferences(mediaId) {
   const coverCount = await db('posts').where({ cover_media_id: mediaId }).count({ total: '*' }).first();
   const usageCount = await db('post_media').where({ media_id: mediaId }).count({ total: '*' }).first();
+  // Pending and returned revisions hold their own media references, so an
+  // asset used only by a proposed change is still in use.
+  const revisionCoverCount = await db('post_revisions')
+    .where({ cover_media_id: mediaId })
+    .count({ total: '*' })
+    .first();
+  const revisionUsageCount = await db('post_revision_media')
+    .where({ media_id: mediaId })
+    .count({ total: '*' })
+    .first();
   return {
     cover: Number(coverCount.total) || 0,
     usage: Number(usageCount.total) || 0,
+    revision_cover: Number(revisionCoverCount.total) || 0,
+    revision_usage: Number(revisionUsageCount.total) || 0,
   };
 }
 
@@ -144,8 +156,12 @@ async function deleteMedia(user, id) {
   }
 
   const refs = await getMediaReferences(media.id);
-  if (refs.cover > 0 || refs.usage > 0) {
-    throw httpError(409, 'MEDIA_IN_USE', 'Media is referenced by posts and cannot be deleted');
+  if (refs.cover > 0 || refs.usage > 0 || refs.revision_cover > 0 || refs.revision_usage > 0) {
+    throw httpError(
+      409,
+      'MEDIA_IN_USE',
+      'Media is referenced by posts or pending revisions and cannot be deleted',
+    );
   }
 
   // Only attempt remote deletion for uploaded assets.

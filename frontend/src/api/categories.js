@@ -30,4 +30,3 @@ export async function updateCategory(id, payload) {
 export async function deleteCategory(id) {
   await apiJson(`/categories/${id}`, { method: 'DELETE' });
 }
-EOF

@@ -177,7 +177,7 @@ test('editor creates draft; not public; managed list shows it', async () => {
   assert.ok(managedRes.body.data.some((p) => p.id === post.id));
 });
 
-test('publish makes post public; unpublish removes', async () => {
+test('editor submission becomes public only after admin approval; admin unpublishes', async () => {
   const editor = await createUser({ role: 'editor' });
   const editorToken = await login(editor);
   const admin = await createUser({ role: 'admin' });
@@ -197,11 +197,16 @@ test('publish makes post public; unpublish removes', async () => {
   const postId = postRes.body.data.id;
   createdPostIds.add(postId);
 
-  // publish via PATCH status
-  const pubRes = await request(app)
-    .patch(`/api/posts/${postId}`)
+  // Editor submits instead of publishing.
+  await request(app)
+    .post(`/api/posts/${postId}/submit-review`)
     .set(authHeader(editorToken))
-    .send({ status: 'published' })
+    .expect(200);
+
+  // Approval by an admin publishes it.
+  const pubRes = await request(app)
+    .post(`/api/posts/${postId}/approve`)
+    .set(authHeader(adminToken))
     .expect(200);
   assert.equal(pubRes.body.data.status, 'published');
   assert.ok(pubRes.body.data.published_at);
@@ -211,10 +216,10 @@ test('publish makes post public; unpublish removes', async () => {
   const detailRes = await request(app).get(`/api/posts/${slug}`).expect(200);
   assert.equal(detailRes.body.data.id, postId);
 
-  // unpublish
+  // unpublish (admin only)
   await request(app)
     .patch(`/api/posts/${postId}`)
-    .set(authHeader(editorToken))
+    .set(authHeader(adminToken))
     .send({ status: 'unpublished' })
     .expect(200);
 
@@ -261,11 +266,19 @@ test('soft delete rewrites slug and removes from public', async () => {
       content: { type: 'doc', content: [] },
       post_type: 'news',
       category_id: cat.id,
-      status: 'published',
     })
     .expect(201);
   const post = postRes.body.data;
   createdPostIds.add(post.id);
+
+  await request(app)
+    .post(`/api/posts/${post.id}/submit-review`)
+    .set(authHeader(editorToken))
+    .expect(200);
+  await request(app)
+    .post(`/api/posts/${post.id}/approve`)
+    .set(authHeader(adminToken))
+    .expect(200);
 
   const originalSlug = post.slug;
 
@@ -338,8 +351,6 @@ test('validation errors return 400', async () => {
 });
 
 test('expired post excluded from public list', async () => {
-  const editor = await createUser({ role: 'editor' });
-  const editorToken = await login(editor);
   const admin = await createUser({ role: 'admin' });
   const adminToken = await login(admin);
   const cat = await createCategory({ name: `ExpCat ${Date.now()}` }, adminToken);
@@ -349,7 +360,7 @@ test('expired post excluded from public list', async () => {
 
   const postRes = await request(app)
     .post('/api/posts')
-    .set(authHeader(editorToken))
+    .set(authHeader(adminToken))
     .send({
       title: `Expired ${Date.now()}`,
       content: { type: 'doc', content: [] },

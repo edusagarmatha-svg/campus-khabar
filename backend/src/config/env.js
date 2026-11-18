@@ -251,6 +251,40 @@ if (errors.length > 0) {
   );
 }
 
+// --- Rate limiting -------------------------------------------------------
+// Applied to authentication endpoints. In test mode the limit is effectively
+// disabled so the suite stays deterministic. In development the default is
+// generous to avoid blocking repeated local testing; override with env vars.
+// A dev-only kill switch (RATE_LIMIT_DISABLED) is honoured only outside
+// production so it can never weaken a deployed instance.
+const rateLimitWindowMs = 15 * 60 * 1000;
+
+function readRateLimitMax(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    errors.push(`${name} must be a positive integer; got "${raw}"`);
+    return fallback;
+  }
+  return value;
+}
+
+const loginRateLimitMax = isTest
+  ? 100000
+  : isProduction
+    ? 10
+    : readRateLimitMax('LOGIN_RATE_LIMIT_MAX', 100);
+
+const authRateLimitMax = isTest
+  ? 100000
+  : isProduction
+    ? 100
+    : readRateLimitMax('AUTH_RATE_LIMIT_MAX', 1000);
+
+const rateLimitDisabled =
+  !isProduction && process.env.RATE_LIMIT_DISABLED === 'true';
+
 /**
  * Single source of truth for environment settings. Secrets stay in memory and
  * are never logged or returned by an endpoint.
@@ -276,6 +310,12 @@ module.exports = Object.freeze({
       domain: cookieDomain,
       maxAgeMs: refreshTokenTtlSeconds * 1000,
     }),
+  }),
+  rateLimit: Object.freeze({
+    windowMs: rateLimitWindowMs,
+    loginMax: loginRateLimitMax,
+    authMax: authRateLimitMax,
+    disabled: rateLimitDisabled,
   }),
   cloudinary: Object.freeze({
     configured: cloudinaryConfigured,
