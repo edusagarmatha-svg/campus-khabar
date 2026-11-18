@@ -8,8 +8,10 @@ const db = require('./db/knex');
 const authRoutes = require('./routes/authRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const postRoutes = require('./routes/postRoutes');
+const postRevisionRoutes = require('./routes/postRevisionRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const userRoutes = require('./routes/userRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const app = express();
 
@@ -62,8 +64,10 @@ app.get('/api/health', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/posts', postRoutes);
+app.use('/api/post-revisions', postRevisionRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin/dashboard', dashboardRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

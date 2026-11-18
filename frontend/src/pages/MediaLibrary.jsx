@@ -54,7 +54,13 @@ export default function MediaLibrary() {
 
   return (
     <section>
-      <h1>Media</h1>
+      <div className="page-heading">
+        <div>
+          <h1>Media</h1>
+          <p className="text-muted">Upload and manage images and files for the newsroom.</p>
+        </div>
+      </div>
+
       <div className="toolbar">
         <label className="button">
           {uploading ? 'Uploading…' : 'Upload image'}
@@ -62,25 +68,36 @@ export default function MediaLibrary() {
         </label>
       </div>
       {error && <p className="error-text">{error}</p>}
-      <div className="media-grid">
-        {items.map((m) => (
-          <div key={m.id} className="media-card">
-            {m.media_type === 'image' ? (
-              <img src={m.file_url} alt={m.alt_text || m.file_name} />
-            ) : (
-              <span>{m.file_name}</span>
-            )}
-            <div className="media-meta">
-              <span>{m.file_name}</span>
-              {(user?.role === 'admin' || m.uploaded_by === user?.id) && (
-                <button onClick={() => handleDelete(m.id)}>Delete</button>
+      {items.length === 0 ? (
+        <div className="empty-state">
+          <p>No media uploaded yet.</p>
+          <span className="text-muted">Use the button above to add your first file.</span>
+        </div>
+      ) : (
+        <div className="media-grid">
+          {items.map((m) => (
+            <div key={m.id} className="media-card">
+              {m.media_type === 'image' ? (
+                <img src={m.file_url} alt={m.alt_text || m.file_name} />
+              ) : (
+                <span>{m.file_name}</span>
               )}
+              <div className="media-meta">
+                <span>{m.file_name}</span>
+                {(user?.role === 'admin' || m.uploaded_by === user?.id) && (
+                  <button
+                    type="button"
+                    className="button button--small button--danger"
+                    onClick={() => handleDelete(m.id)}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-      {items.length === 0 && <p>No media.</p>}
+          ))}
+        </div>
+      )}
     </section>
   );
 }
-EOF

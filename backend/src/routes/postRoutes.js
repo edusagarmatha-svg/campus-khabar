@@ -8,7 +8,13 @@ const postController = require('../controllers/postController');
 const router = express.Router();
 
 const postTypeSchema = z.enum(['news', 'article', 'notice', 'announcement']);
-const statusSchema = z.enum(['draft', 'published', 'unpublished']);
+const statusSchema = z.enum([
+  'draft',
+  'pending_review',
+  'changes_requested',
+  'published',
+  'unpublished',
+]);
 const usageTypeSchema = z.enum(['gallery', 'inline', 'attachment']);
 
 const mediaLinkSchema = z.object({
@@ -36,6 +42,23 @@ const postUpdateSchema = postCreateSchema.partial().omit({ content: true }).exte
   content: z.any().optional(),
 });
 
+// Proposed changes to an already-published post. Every field is optional
+// because omitted fields inherit the post's current value.
+const revisionSchema = z.object({
+  title: z.string().trim().min(1).max(255).optional(),
+  slug: z.string().trim().min(1).max(255).optional(),
+  summary: z.string().trim().max(500).nullable().optional(),
+  content: z.any().optional(),
+  post_type: postTypeSchema.optional(),
+  category_id: z.coerce.number().int().positive().optional(),
+  cover_media_id: z.union([z.null(), z.coerce.number().int().positive()]).optional(),
+  media: z.array(mediaLinkSchema).optional(),
+});
+
+const reviewFeedbackSchema = z.object({
+  feedback: z.string().trim().min(1).max(4000),
+});
+
 const publicQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().max(50).optional(),
@@ -56,14 +79,35 @@ const managedQuerySchema = z.object({
   include_deleted: z.enum(['true', 'false']).optional(),
 });
 
-router.get('/', validateQuery(publicQuerySchema), postController.listPublic);
-router.get('/:slug', postController.getBySlug);
+const queueQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().positive().max(100).optional(),
+});
 
-// Staff routes
+// Public
+router.get('/', validateQuery(publicQuerySchema), postController.listPublic);
+
+// Staff — declared before the public "/:slug" route so that "review-queue"
+// and "manage/..." are not swallowed by the slug matcher.
+router.get(
+  '/review-queue',
+  authenticate,
+  authorize('admin'),
+  validateQuery(queueQuerySchema),
+  postController.reviewQueue,
+);
 router.get('/manage/list', authenticate, authorize('admin', 'editor'), validateQuery(managedQuerySchema), postController.listManaged);
 router.get('/manage/:id', authenticate, authorize('admin', 'editor'), postController.getById);
+router.get('/:id/revisions', authenticate, authorize('admin', 'editor'), postController.listRevisions);
+router.post('/:id/revisions', authenticate, authorize('admin', 'editor'), validateBody(revisionSchema), postController.createRevision);
+router.post('/:id/submit-review', authenticate, authorize('admin', 'editor'), postController.submitReview);
+router.post('/:id/approve', authenticate, authorize('admin'), postController.approve);
+router.post('/:id/request-changes', authenticate, authorize('admin'), validateBody(reviewFeedbackSchema), postController.requestChanges);
 router.post('/', authenticate, authorize('admin', 'editor'), validateBody(postCreateSchema), postController.create);
 router.patch('/:id', authenticate, authorize('admin', 'editor'), validateBody(postUpdateSchema), postController.update);
 router.delete('/:id', authenticate, authorize('admin', 'editor'), postController.remove);
+
+// Public detail (after the staff routes above)
+router.get('/:slug', postController.getBySlug);
 
 module.exports = router;

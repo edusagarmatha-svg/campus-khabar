@@ -29,4 +29,3 @@ export async function updateUser(id, payload) {
   });
   return data.data;
 }
-EOF

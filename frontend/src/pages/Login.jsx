@@ -1,9 +1,24 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
+const STAFF_HOME = '/admin';
+
+// Only ever send staff back to an internal staff path. Anything else (public
+// pages, external URLs, protocol-relative URLs) falls back to the console.
+function resolveRedirect(value) {
+  if (
+    typeof value === 'string' &&
+    (value === STAFF_HOME || value.startsWith(`${STAFF_HOME}/`) || value.startsWith(`${STAFF_HOME}?`)) &&
+    !value.startsWith('//')
+  ) {
+    return value;
+  }
+  return STAFF_HOME;
+}
+
 export default function Login() {
-  const { login } = useAuth();
+  const { login, user, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
@@ -11,7 +26,11 @@ export default function Login() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const from = location.state?.from || '/';
+  const from = resolveRedirect(location.state?.from);
+
+  if (!loading && user) {
+    return <Navigate to={from} replace />;
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -40,7 +59,7 @@ export default function Login() {
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
         {error && <p className="error-text">{error}</p>}
-        <button type="submit" disabled={submitting}>
+        <button type="submit" className="button" disabled={submitting}>
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>

@@ -62,4 +62,3 @@ export async function uploadMedia(file, mediaType, altText = '') {
     alt_text: altText,
   });
 }
-EOF

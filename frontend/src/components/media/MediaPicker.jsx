@@ -64,4 +64,3 @@ export default function MediaPicker({ onSelect, mediaType = 'image' }) {
     </div>
   );
 }
-EOF

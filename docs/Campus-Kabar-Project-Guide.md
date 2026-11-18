@@ -69,7 +69,10 @@ gallery, or downloadable attachment where appropriate.
     content.
 -   Can create and edit news, articles, notices, and announcements.
 -   Can upload and insert supported media.
--   Can save drafts and publish content if that permission is granted.
+-   Can save drafts and submit them for review. Editors cannot publish,
+    unpublish, approve, or request changes; those are Admin actions.
+-   Can revise a returned submission and resubmit it, and can propose
+    changes to a published post as a revision that an Admin must approve.
 -   Cannot manage admin accounts, roles, or sensitive platform settings
     unless explicitly granted.
 
@@ -129,16 +132,23 @@ application logic.
 
 ### Publishing states
 
-At minimum, support:
+Approved editorial workflow (implemented in the review-workflow
+migration):
 
--   `draft` --- saved but not publicly visible.
--   `published` --- visible on the public portal.
--   `unpublished` --- removed from public visibility but retained in the
-    system.
+-   `draft` --- saved but not submitted; publicly invisible.
+-   `pending_review` --- submitted by its author and waiting for an Admin;
+    publicly invisible and locked to the author while it is pending.
+-   `changes_requested` --- returned by an Admin with feedback; publicly
+    invisible and editable/resubmittable by its author.
+-   `published` --- approved and visible on the public portal.
+-   `unpublished` --- removed from public visibility by an Admin but
+    retained in the system.
 
-A future review/approval state may be added if the editorial workflow
-requires it. Do not build a complex approval workflow without an
-approved requirement.
+Editors never set `published`, `unpublished`, or `pending_review` directly;
+they submit and an Admin approves or returns the submission. Public
+endpoints only ever read `published` posts. Edits to an already-published
+post are stored in `post_revisions`, so the live post stays public and
+unchanged until an Admin approves the proposed version.
 
 ### Important content fields
 
@@ -233,7 +243,8 @@ Restrict embedded media to approved providers and validate URLs.
 -   Create and edit content.
 -   Rich-text editing with inline media.
 -   Upload and manage media.
--   Save drafts, publish, and unpublish.
+-   Save drafts, submit for review, and (Admin) approve, publish, or
+    unpublish.
 -   Feature/pin important content.
 -   Manage content list with search, filters, and sorting.
 -   Manage categories (Admin).
@@ -462,7 +473,11 @@ still used cannot be removed. Deactivate it instead.
 | `category_id`    | BIGINT UNSIGNED    | no   | FK categories, `ON DELETE RESTRICT`              |
 | `author_id`      | BIGINT UNSIGNED    | no   | FK users, `ON DELETE RESTRICT`                   |
 | `cover_media_id` | BIGINT UNSIGNED    | yes  | FK media, `ON DELETE SET NULL`; at most one cover |
-| `status`         | VARCHAR(16)        | no   | `draft`, `published`, `unpublished`; default `draft` |
+| `status`         | VARCHAR(24)        | no   | `draft`, `pending_review`, `changes_requested`, `published`, `unpublished`; default `draft` |
+| `submitted_at`   | DATETIME(3)        | yes  | Set when submitted for review                    |
+| `review_feedback`| TEXT               | yes  | Admin feedback for the author; staff endpoints only |
+| `reviewed_by`    | BIGINT UNSIGNED    | yes  | FK users, `ON DELETE SET NULL`                   |
+| `reviewed_at`    | DATETIME(3)        | yes  | Last review decision timestamp                   |
 | `is_featured`    | BOOLEAN            | no   | Default FALSE                                    |
 | `published_at`   | DATETIME(3)        | yes  | Set when first published                         |
 | `expires_at`     | DATETIME(3)        | yes  | Optional expiry for notices/announcements         |
@@ -473,7 +488,7 @@ still used cannot be removed. Deactivate it instead.
 Constraints:
 
 -   `CHECK (post_type IN ('news','article','notice','announcement'))`.
--   `CHECK (status IN ('draft','published','unpublished'))`.
+-   `CHECK (status IN ('draft','pending_review','changes_requested','published','unpublished'))`.
 -   `CHECK (status <> 'published' OR published_at IS NOT NULL)` — a
     published post always has a publication time.
 -   `CHECK (expires_at IS NULL OR published_at IS NULL OR expires_at > published_at)`.
@@ -542,6 +557,32 @@ content itself (media IDs appear at their exact position). The
 cannot enforce an invariant inside JSON, so the service layer enforces it
 on every save.
 
+### `post_revisions`
+
+A proposed edit to an already-published post. The live post is untouched
+until an Admin approves the revision, at which point the revision is
+applied to `posts` and marked `applied` in a single transaction. A
+revision stores the complete proposed content: `title`, `slug`,
+`summary`, `content` (JSON), `post_type`, `category_id`,
+`cover_media_id`, plus `author_id` and review metadata (`status`,
+`review_feedback`, `submitted_at`, `reviewed_by`, `reviewed_at`).
+
+-   `status` CHECK: `pending_review`, `changes_requested`, `applied`,
+    `discarded`; default `pending_review`.
+-   `post_id` FK posts CASCADE; `author_id` FK users RESTRICT;
+    `category_id` FK categories RESTRICT; `cover_media_id` FK media SET
+    NULL; `reviewed_by` FK users SET NULL.
+-   At most one open revision (`pending_review` or `changes_requested`)
+    per post, enforced by the service layer.
+-   Revisions are never exposed by public endpoints.
+
+### `post_revision_media`
+
+Mirrors `post_media` for revision content: composite primary key
+`(revision_id, media_id, usage_type)`, `revision_id` CASCADE,
+`media_id` RESTRICT. Media that exists only in a pending revision cannot
+be deleted; the media-deletion check counts revision references too.
+
 ### Tags
 
 Deferred. No `tags` or `post_tags` tables in Version 1. Adding them later
@@ -566,6 +607,11 @@ key.
 | `media (storage_provider, storage_key)` UNIQUE | Upload dedupe and metadata registration    |
 | `media (media_type, created_at)`            | Media library filtering                       |
 | `post_media (media_id, usage_type)`         | "Where is this media used?"                   |
+| `posts (status, submitted_at)`              | Review queue ordering                          |
+| `post_revisions (post_id, status)`          | Open revision lookup for a post                |
+| `post_revisions (author_id, status)`        | An editor's revision history                   |
+| `post_revisions (status, submitted_at)`     | Admin review queue                             |
+| `post_revision_media (media_id, usage_type)`| Revision media usage and deletion protection    |
 
 Slugs stay globally unique even with soft deletion. Deleting a post
 rewrites its slug to `original-slug--deleted-<id>` so the original slug
@@ -874,12 +920,17 @@ Resolved before Milestone 2:
 -   Each post has exactly one category; the cover is stored on
     `posts.cover_media_id`.
 -   Tags are deferred and are not part of Version 1.
+-   Editors cannot publish directly. They submit drafts and revisions for
+    review; an Admin approves or requests changes. Requesting changes and
+    reviewing are enforced by the backend (`authenticate` + `authorize`
+    plus service-level guards), not only hidden in the UI. Admin approval
+    applies a revision and its media relationships in one transaction, and
+    returning a submission never modifies or unpublishes live content.
 
 Still open; do not guess these:
 
 -   Is Campus Kabar for one campus/organization only, or should it
     support multiple campuses in the future?
--   Can Editors publish directly, or must an Admin approve their drafts?
 -   Which language will Version 1 use?
 -   Which hosting environment will be used?
 -   Is keyword search across post bodies required in Version 1? If so,

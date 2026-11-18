@@ -59,6 +59,65 @@ async function remove(req, res) {
   res.status(200).json({ data: post });
 }
 
+async function submitReview(req, res) {
+  const post = await postService.submitPostForReview(req.user, req.params.id);
+  res.status(200).json({ data: post });
+}
+
+async function approve(req, res) {
+  const post = await postService.approvePost(req.user, req.params.id);
+  res.status(200).json({ data: post });
+}
+
+async function requestChanges(req, res) {
+  const post = await postService.requestPostChanges(req.user, req.params.id, req.body.feedback);
+  res.status(200).json({ data: post });
+}
+
+async function reviewQueue(req, res) {
+  const result = await postService.getReviewQueue(req.user, parsePagination(req));
+  res.status(200).json(result);
+}
+
+async function createRevision(req, res) {
+  const revision = await postService.createRevision(req.user, req.params.id, req.body);
+  res.status(201).json({ data: revision });
+}
+
+async function listRevisions(req, res) {
+  const result = await postService.listRevisions(req.user, req.params.id);
+  res.status(200).json(result);
+}
+
+async function getRevision(req, res) {
+  const revision = await postService.getRevisionById(req.user, req.params.id);
+  res.status(200).json({ data: revision });
+}
+
+async function updateRevision(req, res) {
+  const revision = await postService.updateRevision(req.user, req.params.id, req.body);
+  res.status(200).json({ data: revision });
+}
+
+async function submitRevision(req, res) {
+  const revision = await postService.submitRevisionForReview(req.user, req.params.id);
+  res.status(200).json({ data: revision });
+}
+
+async function approveRevision(req, res) {
+  const post = await postService.approveRevision(req.user, req.params.id);
+  res.status(200).json({ data: post });
+}
+
+async function requestRevisionChanges(req, res) {
+  const revision = await postService.requestRevisionChanges(
+    req.user,
+    req.params.id,
+    req.body.feedback,
+  );
+  res.status(200).json({ data: revision });
+}
+
 module.exports = {
   listPublic,
   getBySlug,
@@ -67,4 +126,15 @@ module.exports = {
   create,
   update,
   remove,
+  submitReview,
+  approve,
+  requestChanges,
+  reviewQueue,
+  createRevision,
+  listRevisions,
+  getRevision,
+  updateRevision,
+  submitRevision,
+  approveRevision,
+  requestRevisionChanges,
 };

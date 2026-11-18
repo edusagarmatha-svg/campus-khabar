@@ -8,4 +8,3 @@ export function collectMediaIds(node, ids = new Set()) {
   }
   return ids;
 }
-EOF

@@ -795,3 +795,192 @@ Wires the Stage 1 service/token layer into the HTTP surface. No new database cha
 - No automated frontend tests; verification is build plus manual flow.
 - Bundle size warning (>500 kB) due to TipTap; code splitting can be added later.
 - Public portal (Milestone 7) and deployment hardening (Milestone 8) remain.
+
+---
+
+## 17. Milestone 7 — public portal frontend (implemented, uncommitted)
+
+### Scope
+- Moved staff console under `/admin`; public portal at `/`.
+- Preserved `/login` for staff; legacy staff routes redirect to `/admin` equivalents.
+- Added editorial design system: `frontend/src/styles/tokens.css` as single source of truth (palette, typography, spacing, containers, breakpoints, aliases).
+- Added Source Serif 4 (headlines) and Inter (UI) via Google Fonts.
+- Added public layout, homepage (featured hero, latest grid, category sections), category page, article detail, search, pagination.
+- Safe TipTap JSON renderer (`TipTapRenderer`) without HTML injection; handles missing/unsupported content.
+- Responsive image loading with lazy loading and dimensions from backend media metadata.
+- SEO/social metadata component (title, description, Open Graph, Twitter).
+- Backend: public post responses now include `cover_image` metadata (file_url, alt_text, width, height, file_name, id) via join to media; `cover_media_id` retained.
+- Added `backend/tests/publicPosts.test.js` (2 tests) verifying cover image serialization in public list/detail.
+
+### Files added
+- `frontend/src/styles/tokens.css`, `frontend/src/styles/public.css`
+- `frontend/src/components/public/PublicLayout.jsx`, `Seo.jsx`, `TipTapRenderer.jsx`, `LegacyEditRedirect.jsx`
+- `frontend/src/pages/public/Home.jsx`, `Category.jsx`, `Article.jsx`, `Search.jsx`
+- `backend/tests/publicPosts.test.js`
+
+### Files modified
+- `frontend/src/App.jsx` (routing), `frontend/src/main.jsx` (imports), `frontend/index.html` (fonts/title)
+- `frontend/src/index.css` (consume tokens), `frontend/src/components/layout/AppShell.jsx`, `frontend/src/pages/PostEditor.jsx`, `frontend/src/pages/PostsList.jsx`
+- `frontend/src/api/posts.js` (public helpers)
+- `backend/src/services/postService.js` (cover image join + serialization)
+
+### Verification
+- Frontend: `npm run build` passes.
+- Backend: `npm test` on isolated test DB (port 3308): **56 tests, 56 pass, 0 fail**.
+
+### Remaining limitations
+- No automated frontend tests; verification is build plus manual flow.
+- Bundle size warning (>500 kB) due to TipTap; code splitting can be added later.
+- Author name, related posts, view counts, RSS/sitemap deferred.
+
+### Milestone 7 verification (final)
+- Public routes (`/`, `/category/:slug`, `/posts/:slug`, `/search`) and staff routes (`/admin/*`) compile in production build.
+- Legacy staff routes redirect to `/admin` equivalents.
+- Staff auth flow (login/refresh/logout) preserved under `/admin`; API proxy verified.
+- Admin/editor permissions enforced by existing backend tests (users/content/media).
+- Public visibility: published posts only; expired and soft-deleted posts excluded (content tests).
+- Cover and inline media render via `TipTapRenderer` using backend `cover_image`/image node `src`.
+- Responsive layouts via mobile/tablet breakpoints in `public.css`.
+- Backend: 56/56 tests pass on isolated DB (port 3308).
+- Frontend: production build passes.
+- Git status: Milestone 7 changes uncommitted on `public-portal-frontend`.
+
+---
+
+## 18. Login rate limiting and staff login navigation (implemented, uncommitted)
+
+### Rate limiting changes
+- Split single global auth limiter into:
+  - `loginRateLimiter`: applied only to `POST /api/auth/login`. Window 15 minutes. Production max 10 attempts per IP; development default 100; test 100000. `skipSuccessfulRequests: true` so only failed logins consume the budget; successful logins do not.
+  - `authRateLimiter`: applied to `/refresh`, `/logout`, `/me`. Production max 100 per 15 min; development default 1000; test 100000. This prevents normal SPA usage (which polls `/me` and refreshes tokens) from tripping the stricter login budget.
+- Configuration centralized in `backend/src/config/env.js` under `env.rateLimit` (`windowMs`, `loginMax`, `authMax`, `disabled`).
+- Overrides via `LOGIN_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_MAX` env vars.
+- Dev-only kill switch: `RATE_LIMIT_DISABLED=true` is honoured only when `NODE_ENV !== production`; production ignores it.
+- No public reset endpoint; in-memory store resets on process restart.
+- Production verified: 11th consecutive failed login returns 429; invalid credentials still return 401.
+- Development verified: 25 consecutive invalid logins return 401 (no 429).
+
+### Staff login navigation
+- Added subtle "Staff Login" link in public header (right side) and footer, both navigating to `/login`.
+- No new login page; no signup/registration exposed.
+- Styled via `staff-login-link` class in `frontend/src/styles/public.css`.
+
+### Permissions review (actual implemented)
+Backend-enforced:
+- Admin: full CRUD on users (admin-only routes), categories (admin-only), posts (all posts, including editing/deleting others' and deleted inclusion), media (all uploads), staff management and role assignment. Last active admin cannot be deactivated/deroled.
+- Editor: can create posts (author_id = self), list/manage only own posts, update/delete own posts only; media upload and delete own uploads only; cannot manage categories (GET only), users, or other editors' content.
+- Shared: dashboard (frontend), post create/edit/publish/unpublish (backend allows status transitions for owned posts; superseded by §19, where Editors submit for review and only Admins publish), media upload/view.
+Frontend visibility vs backend:
+- PostsList shows Delete only for admin (frontend), but backend allows delete for owner editors too. Inconsistency: editors can delete their own posts via API but UI hides the button. Report only; no change made.
+- MediaLibrary shows Delete for admin or uploader (matches backend).
+- Categories page shows create/toggle/delete only for admin (matches backend).
+- Staff page only reachable by admin via RequireRole (matches backend admin-only user routes).
+- Editors cannot view other users' posts in managed list (backend filters by author_id).
+Unavailable actions: no user deletion endpoint (only create/update/activate/deactivate); no media deletion if referenced; no category deletion if? categoryService.deleteCategory may restrict (not reviewed in detail); editors cannot include deleted posts.
+
+### Test/build results
+- Backend: 56/56 pass.
+- Frontend build: passes.
+
+---
+
+## 19. Editorial review workflow: admin approval, revisions, review queue (implemented, uncommitted)
+
+### Scope
+- Added an editorial review workflow so Editors submit content and Admins approve, return, or reject it.
+- Added revisions for already-published posts: an Editor's edit becomes a proposal that leaves the live post untouched until an Admin approves it.
+- Added a role-aware staff console: dashboard statistics, status filters and badges, a review queue, and consistent staff page primitives.
+- Existing published content was not rewritten: the migration only widens the status column and adds tables/columns.
+
+### Status model
+| Status | Meaning | Public | Editor may edit |
+| --- | --- | --- | --- |
+| `draft` | Saved, not submitted | No | Yes |
+| `pending_review` | Submitted, awaiting Admin | No | No (409 `POST_LOCKED`) |
+| `changes_requested` | Returned with feedback | No | Yes, resubmittable |
+| `published` | Approved and live | Yes | No in place (409 `REVISION_REQUIRED`) |
+| `unpublished` | Removed from public by Admin | No | No |
+
+`deleted_at` remains the independent soft-delete flag.
+
+### Migration
+`backend/migrations/20261119000001_add_editorial_review_workflow.js`
+- `posts.status` widened to `VARCHAR(24)`; `chk_posts_status` recreated with the five allowed values.
+- New `posts` review columns: `submitted_at`, `review_feedback`, `reviewed_by` (FK users, SET NULL), `reviewed_at`.
+- New `post_revisions`: complete proposed snapshot (`title`, `slug`, `summary`, `content` JSON, `post_type`, `category_id`, `cover_media_id`), `author_id` (RESTRICT), `status` in (`pending_review`, `changes_requested`, `applied`, `discarded`), review metadata, timestamps. Indexes on `(post_id, status)`, `(author_id, status)`, `(status, submitted_at)`.
+- New `post_revision_media` mirroring `post_media` with `media_id` RESTRICT, so media used only by a pending revision cannot be deleted.
+- Down migration drops both tables, the review columns, and restores the original status CHECK.
+
+### Backend behavior
+- `postService` owns every transition: `submitPostForReview`, `approvePost`, `requestPostChanges`, `createRevision`, `updateRevision`, `submitRevisionForReview`, `requestRevisionChanges`, `approveRevision`, `getReviewQueue`.
+- Editors may only create `draft` posts and edit their own `draft`/`changes_requested` posts; setting `published`, `unpublished`, or `pending_review` directly through create/update is rejected (403).
+- Submitting is allowed from `draft` and `changes_requested`; approval and request-changes require `pending_review` and are Admin-only, enforced by both route middleware and service guards.
+- Feedback is required to request changes, trimmed, and capped at 4000 characters.
+- `approveRevision` runs in one transaction with `FOR UPDATE` on the post: it applies every proposed field, replaces `post_media`, preserves `published_at`, and marks the revision `applied`. Requesting changes only touches the revision row.
+- At most one open revision per post (409 `REVISION_EXISTS`); revision media access is limited to media the editor uploaded or media already attached to the post (403 `MEDIA_NOT_OWNED`), and inline image IDs must resolve to allowed media.
+- Public endpoints keep `status = 'published'` only and `toPublicPost` never serialises review fields; staff reads use the new `toManagedPost`.
+- Media deletion now returns 409 when a revision references the media, and `GET /api/media/:id/usage` reports revision references.
+- New endpoints: `GET /api/posts/review-queue`, `POST /api/posts/:id/submit-review`, `.../approve`, `.../request-changes`, `GET|POST /api/posts/:id/revisions`, `PATCH /api/post-revisions/:id`, `.../submit-review`, `.../approve`, `.../request-changes`, and `GET /api/admin/dashboard`.
+- Fixed a pre-existing bug: JSON columns are now `JSON.stringify`-ed on UPDATE (`content`), which Knex otherwise sent as unquoted values (`ER_INVALID_JSON_TEXT`).
+
+### Frontend
+- Login redirects to `/admin` (validating that `from` is an internal `/admin` path); an already-signed-in staff user is sent to `/admin`.
+- `AppShell` uses `NavLink` active states, a responsive stacked layout, and a status-aware footer link.
+- `Dashboard` shows role-appropriate counts from `/api/admin/dashboard` plus recent submissions, and links to the review queue.
+- `ReviewQueue` (`/admin/review`, Admin-only) lists pending posts and revisions with Approve / Request changes / Edit / Preview.
+- `PostsList` adds status filters, status badges, submit/approve/request-changes actions, and shows Delete for Admins and post owners (matching the backend).
+- `PostEditor` is role-aware: Editors get Save + Submit for review, review feedback is shown when changes are requested, published posts open in revision mode ("Submit proposed changes"), and pending posts are read-only for their author. Admins see all statuses plus "Save and approve changes" for pending revisions.
+- `TipTapEditor` now accepts `editable` and disables its toolbar when read-only.
+- Staff console styling added to `frontend/src/index.css` using `tokens.css` variables only; the public portal stylesheet was not touched.
+
+### Tests
+- `backend/tests/reviewWorkflow.test.js` (11 tests): Editor publish prevention (create + PATCH), submitted posts invisible publicly, request-changes then resubmit, pending edits locked, revision pending keeps the post live, revision request-changes then resubmit, atomic apply of revision fields and media, revision media ownership, cross-editor access denial, public exclusion of every non-published status, and dashboard scoping.
+- `backend/tests/content.test.js` and `publicPosts.test.js` adapted to the submit → approve flow.
+
+### Verification
+- Migration exercised on the disposable container DB (`campus_kabar_test`, port 3308): `migrate:latest` → batch of 7; `migrate:down 20261119000001...` → clean rollback; re-apply → 1 migration. The native development database was never touched.
+- Backend: `npm test` on the isolated DB — **67 tests, 67 pass, 0 fail**.
+- Frontend: `npm run build` passes (bundle-size warning only). `npm run lint` reports only pre-existing issues in files not changed by this work (`api/client.js`, `AuthContext.jsx`, `MediaPicker.jsx`, `pages/Categories.jsx`, `pages/MediaLibrary.jsx`, `pages/Staff.jsx`).
+- Git status: all changes uncommitted on `public-portal-frontend`; nothing committed or pushed.
+
+### Remaining limitations
+- No automated frontend tests; staff UI verification is build plus manual checks.
+- `review_feedback` is overwritten by the latest review decision; there is no review history table.
+- A revision's `is_featured`/`expires_at` are not part of the proposal; Admins set them on the post directly.
+- Down migration cannot restore the old CHECK if rows already use the new statuses; production rollback needs data cleanup first.
+- The review queue is capped at 100 items in the UI (no pagination control yet).
+- Rate limiting remains single-instance, as recorded in §18.
+
+## 20. Cloudinary "Invalid Signature" investigation, dashboard fix, and admin UI polish (implemented, uncommitted)
+
+### Cloudinary investigation (read-only; no credentials printed)
+
+- Reported error: `Invalid Signature`; reported string to sign `allowed_formats=jpg,jpeg,png,webp&folder=campus-kabar/dev/image&timestamp=1794996843`.
+- `generateUploadSignature()` in `backend/src/services/cloudinaryService.js` signs exactly `{ timestamp, folder, allowed_formats }` via `cloudinary.utils.api_sign_request`. Reproducing the reported canonical string byte-for-byte produced an identical string, so parameter sorting, encoding, exclusions (`file`, `api_key`, `resource_type`, `cloud_name`), and timestamp handling are correct. The frontend (`frontend/src/api/media.js`) posts exactly the signed parameters plus unsigned `file` and `api_key`, with no extra unsigned fields.
+- `backend/src/config/env.js` loads `.env` by absolute path, lets process env win, and trims values; the secret is never sent to the frontend. No shell override or second `.env` file was present.
+- Root cause: **credential configuration, not an implementation bug.** `CLOUDINARY_API_SECRET` in `backend/.env` was byte-identical to `CLOUDINARY_API_KEY` (15 digits) instead of the 27-character API secret. A read-only Cloudinary Admin API check (`GET .../resources/image`) returned `401 {"error":{"message":"api_secret mismatch"}}`, which also confirms the cloud name and API key themselves are valid. The running dev server (started 15:58:48) also held a stale `.env` snapshot (`.env` edited 16:00:21), so even a corrected file would not take effect until restart.
+- No files were modified by the investigation. Fix is operational: replace the secret with the real value from the Cloudinary console and restart the backend. Do not print or log the secret.
+
+### Dashboard API error
+
+- Symptom: `No route for GET /api/admin/dashboard`.
+- Investigation: the route and mount (`app.use('/api/admin/dashboard', dashboardRoutes)`) exist and are correct; the frontend URL matches. The actual failure was a `500 ER_BAD_FIELD_ERROR`: `dashboardService` selected `p.submitted_at`, but the dev database `campus_kabar` (on 127.0.0.1:3306) had not yet had migration `20261119000001_add_editorial_review_workflow.js` applied, so `posts.submitted_at` did not exist. `knex migrate:status` showed one pending migration.
+- Fix: ran `npm run migrate` against the development database (batch 2, 1 migration). No schema redesign; this applies the already-authored migration the code depends on.
+- Verification: `GET /api/admin/dashboard` now returns `200` with role-appropriate data for both Admin (includes `staff.active`) and Editor (`staff` omitted); unauthenticated requests return `401`.
+
+### Admin UI consistency and polish
+
+- Preserved the existing palette, sidebar, layout, and tokens; no public-portal changes.
+- `frontend/src/index.css`: enhanced `.button` (inline-flex, consistent min-height, transitions, focus-visible ring, active state, disabled styling), added `.button--ghost`, shared form-control styling for inputs/selects/textareas across `.editor-form`, `.toolbar`, `.inline-form`, `.auth-card`, `.feedback-form`, `.modal-card`, and `.field` with focus rings and disabled states, label spacing, modal spacing, responsive `.form-row` collapse, responsive toolbar/row-actions, and consistent modal presentation.
+- `frontend/src/pages/Categories.jsx`: page-heading, styled buttons, status badges, table-scroll wrapper, empty state.
+- `frontend/src/pages/Staff.jsx`: page-heading, styled create button, role selects, active badges, table-scroll, empty state, row-actions.
+- `frontend/src/pages/MediaLibrary.jsx`: page-heading, destructive delete button styling, empty state.
+- `PostEditor`, `Login`, `MediaPicker`, `Dashboard`, `PostsList`, `ReviewQueue` already used the shared primitives; their controls now inherit the improved focus/disabled styling.
+
+### Verification
+
+- Backend full suite: `67 tests, 67 pass, 0 fail` on the disposable test DB (3308) when Cloudinary vars are unset (the intended unconfigured test setup; the single env-dependent media test fails only if `.env` carries Cloudinary values, and passes with the vars cleared). No code change was needed for this.
+- Frontend: `npm run build` passes (bundle-size warning only); `npm run lint` reports only the pre-existing issues in `api/client.js`, `AuthContext.jsx`, `MediaPicker.jsx`, `pages/Categories.jsx`, `pages/MediaLibrary.jsx`, `pages/Staff.jsx`.
+- Dashboard endpoint verified live with Admin and Editor tokens (200 + data) and unauthenticated (401).
+- Migration status on dev DB: 7 completed, 0 pending.
+- No credentials, schema redesigns, public-portal changes, commits, or pushes were made. Cloudinary secret still needs replacement in `.env` followed by a backend restart.
