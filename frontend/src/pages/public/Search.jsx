@@ -72,15 +72,18 @@ export default function Search() {
       ) : loading ? (
         <p>Loading…</p>
       ) : posts.length === 0 ? (
-        <p className="muted">No results for “{q}”.</p>
+        <div className="empty-state">
+          <h3>No results found</h3>
+          <p>Try a different keyword or browse categories.</p>
+        </div>
       ) : (
         <>
           <p className="search-count">{total} result{total === 1 ? '' : 's'}</p>
           <div className="listing-grid">
             {posts.map((post) => (
               <article key={post.id} className="listing-card">
-                {post.cover_image && post.cover_image.file_url && (
-                  <Link to={`/posts/${post.slug}`} className="listing-media">
+                <Link to={`/posts/${post.slug}`} className="listing-media">
+                  {post.cover_image && post.cover_image.file_url ? (
                     <img
                       src={post.cover_image.file_url}
                       alt={post.cover_image.alt_text || post.title}
@@ -89,8 +92,10 @@ export default function Search() {
                       loading="lazy"
                       decoding="async"
                     />
-                  </Link>
-                )}
+                  ) : (
+                    <div className="image-placeholder" aria-hidden="true" />
+                  )}
+                </Link>
                 <div className="listing-body">
                   <h2 className="listing-title">
                     <Link to={`/posts/${post.slug}`}>{post.title}</Link>

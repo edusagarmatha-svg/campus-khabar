@@ -2,6 +2,7 @@ const db = require('../db/knex');
 const { httpError } = require('../utils/errors');
 const { slugify, isValidSlug } = require('../utils/slug');
 const categoryService = require('./categoryService');
+const mediaService = require('./mediaService');
 
 const POST_TITLE_MAX = 255;
 const POST_SLUG_MAX = 255;
@@ -478,7 +479,9 @@ async function getPublicPostBySlug(slug) {
   if (!row) {
     throw httpError(404, 'POST_NOT_FOUND', 'Post not found');
   }
-  return toPublicPost(row);
+  const post = toPublicPost(row);
+  post.attachments = await loadPostAttachments(row.id);
+  return post;
 }
 
 // --- Managed reads --------------------------------------------------------
@@ -536,7 +539,10 @@ async function getManagedPostById(user, id) {
   if (!canManagePost(user, row)) {
     throw httpError(403, 'FORBIDDEN', 'Insufficient permissions');
   }
-  return toManagedPost(row);
+  const post = toManagedPost(row);
+  post.media = await listPostMedia(postId);
+  post.attachments = await loadPostAttachments(postId);
+  return post;
 }
 
 // --- Post writes ----------------------------------------------------------
@@ -1019,11 +1025,39 @@ async function listRevisionMedia(revisionId) {
   }));
 }
 
+async function listPostMedia(postId) {
+  const rows = await db('post_media').where({ post_id: postId }).orderBy('sort_order', 'asc');
+  return rows.map((r) => ({
+    media_id: r.media_id,
+    usage_type: r.usage_type,
+    sort_order: r.sort_order,
+  }));
+}
+
+async function loadPostAttachments(postId) {
+  const rows = await db('post_media')
+    .join('media', 'post_media.media_id', 'media.id')
+    .where({ 'post_media.post_id': postId, 'post_media.usage_type': 'attachment' })
+    .orderBy('post_media.sort_order', 'asc')
+    .select('media.*');
+  return rows.map(mediaService.toPublicMedia);
+}
+
+async function loadRevisionAttachments(revisionId) {
+  const rows = await db('post_revision_media')
+    .join('media', 'post_revision_media.media_id', 'media.id')
+    .where({ 'post_revision_media.revision_id': revisionId, 'post_revision_media.usage_type': 'attachment' })
+    .orderBy('post_revision_media.sort_order', 'asc')
+    .select('media.*');
+  return rows.map(mediaService.toPublicMedia);
+}
+
 async function getRevisionById(user, revisionId) {
   const row = await getRevisionRow(user, revisionId);
   return {
     ...toManagedRevision(row),
     media: await listRevisionMedia(row.id),
+    attachments: await loadRevisionAttachments(row.id),
   };
 }
 

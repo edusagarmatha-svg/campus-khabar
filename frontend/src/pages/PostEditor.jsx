@@ -55,7 +55,9 @@ export default function PostEditor() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [showPicker, setShowPicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState('inline'); // inline | cover
+  const [pickerMode, setPickerMode] = useState('inline'); // inline | cover | attachment
+  const [pickerMediaType, setPickerMediaType] = useState('image'); // image | video
+  const [attachments, setAttachments] = useState([]);
   const editorRef = useRef(null);
 
   const isOwner = post ? Number(post.author_id) === Number(user?.id) : true;
@@ -105,6 +107,7 @@ export default function PostEditor() {
         setCategoryId(source.category_id ? String(source.category_id) : '');
         setContent(source.content || EMPTY_DOC);
         setCoverMediaId(source.cover_media_id ? String(source.cover_media_id) : '');
+        setAttachments(Array.isArray(source.attachments) ? source.attachments : []);
         setStatus(loadedPost.status || 'draft');
       } catch (e) {
         setError(e.message);
@@ -116,7 +119,10 @@ export default function PostEditor() {
 
   function buildPayload() {
     const inlineIds = collectMediaIds(content);
-    const media = Array.from(inlineIds).map((mediaId) => ({ media_id: mediaId, usage_type: 'inline' }));
+    const media = [
+      ...Array.from(inlineIds).map((mediaId) => ({ media_id: mediaId, usage_type: 'inline' })),
+      ...attachments.map((m) => ({ media_id: m.id, usage_type: 'attachment' })),
+    ];
     const payload = {
       title,
       summary: excerpt || null,
@@ -202,7 +208,16 @@ export default function PostEditor() {
   }
 
   function insertInlineMedia(media) {
-    editorRef.current?.insertImage(media);
+    if (pickerMediaType === 'video') {
+      editorRef.current?.insertVideo(media);
+    } else {
+      editorRef.current?.insertImage(media);
+    }
+    setShowPicker(false);
+  }
+
+  function addAttachment(media) {
+    setAttachments((prev) => (prev.some((m) => m.id === media.id) ? prev : [...prev, media]));
     setShowPicker(false);
   }
 
@@ -315,15 +330,57 @@ export default function PostEditor() {
             disabled={locked}
           />
         </label>
-        <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('cover'); setShowPicker(true); }}>
+        <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('cover'); setPickerMediaType('image'); setShowPicker(true); }}>
           Select cover media
         </button>
 
         <TipTapEditor ref={editorRef} content={content} onChange={setContent} editable={!locked} />
 
-        <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('inline'); setShowPicker(true); }}>
-          Insert inline media
-        </button>
+        <div className="form-row">
+          <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('inline'); setPickerMediaType('image'); setShowPicker(true); }}>
+            Insert image
+          </button>
+          <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('inline'); setPickerMediaType('video'); setShowPicker(true); }}>
+            Insert video
+          </button>
+        </div>
+
+        <section className="attachments-editor">
+          <h3>Attachments</h3>
+          <div className="form-row">
+            <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('attachment'); setPickerMediaType('image'); setShowPicker(true); }}>
+              Add image attachment
+            </button>
+            <button type="button" className="button button--secondary" disabled={locked} onClick={() => { setPickerMode('attachment'); setPickerMediaType('video'); setShowPicker(true); }}>
+              Add video attachment
+            </button>
+          </div>
+          {attachments.length === 0 ? (
+            <p className="muted">No attachments.</p>
+          ) : (
+            <ul className="attachment-list">
+              {attachments.map((m) => (
+                <li key={m.id} className="attachment-item">
+                  {m.media_type === 'video' ? (
+                    <div className="attachment-thumb">
+                      <video src={m.file_url} muted preload="metadata" playsInline />
+                    </div>
+                  ) : (
+                    <div className="attachment-thumb">
+                      <img src={m.file_url} alt={m.alt_text || m.file_name} />
+                    </div>
+                  )}
+                  <span>{m.file_name}</span>
+                  {!locked && (
+                    <button type="button" className="button button--small button--danger" onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== m.id))}>
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         {showPicker && (
           <div className="modal">
@@ -333,8 +390,8 @@ export default function PostEditor() {
                 <button type="button" className="button button--text" onClick={() => setShowPicker(false)}>Close</button>
               </div>
               <MediaPicker
-                onSelect={pickerMode === 'cover' ? selectCover : insertInlineMedia}
-                mediaType="image"
+                onSelect={pickerMode === 'cover' ? selectCover : pickerMode === 'attachment' ? addAttachment : insertInlineMedia}
+                mediaType={pickerMediaType}
               />
             </div>
           </div>

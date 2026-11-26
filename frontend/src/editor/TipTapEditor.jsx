@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
+import { Node } from '@tiptap/core';
 
 const MediaImage = Image.extend({
   addAttributes() {
@@ -21,11 +22,38 @@ const MediaImage = Image.extend({
   },
 });
 
+const MediaVideo = Node.create({
+  name: 'video',
+  group: 'block',
+  draggable: true,
+  addAttributes() {
+    return {
+      src: { default: null },
+      mediaId: { default: null },
+      alt: { default: null },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'video[src]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['video', { controls: true, preload: 'metadata', ...HTMLAttributes }];
+  },
+  addCommands() {
+    return {
+      setVideo: (options) => ({ commands }) => {
+        return commands.insertContent({ type: this.name, attrs: options });
+      },
+    };
+  },
+});
+
 const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange, editable = true }, ref) {
   const editor = useEditor({
     extensions: [
       StarterKit,
       MediaImage,
+      MediaVideo,
       Link.configure({ openOnClick: false }),
       Placeholder.configure({ placeholder: 'Write your content…' }),
     ],
@@ -43,6 +71,13 @@ const TipTapEditor = forwardRef(function TipTapEditor({ content, onChange, edita
   useImperativeHandle(ref, () => ({
     insertImage(media) {
       editor?.chain().focus().setImage({
+        src: media.file_url,
+        alt: media.alt_text || media.file_name,
+        mediaId: media.id,
+      }).run();
+    },
+    insertVideo(media) {
+      editor?.chain().focus().setVideo({
         src: media.file_url,
         alt: media.alt_text || media.file_name,
         mediaId: media.id,

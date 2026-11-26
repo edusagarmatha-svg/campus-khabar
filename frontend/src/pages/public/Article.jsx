@@ -59,6 +59,7 @@ export default function Article() {
   }
 
   const cover = post.cover_image;
+  const isPoster = post.post_type === 'announcement' || post.post_type === 'notice';
 
   return (
     <article className="article-page">
@@ -79,18 +80,40 @@ export default function Article() {
         </header>
 
         {cover && cover.file_url && (
-          <figure className="article-cover">
+          <figure className={`article-cover ${isPoster ? 'article-cover--poster' : ''}`}>
             <img
               src={cover.file_url}
               alt={cover.alt_text || post.title}
               width={cover.width || undefined}
               height={cover.height || undefined}
+              loading="eager"
+              decoding="async"
             />
             {cover.alt_text && <figcaption>{cover.alt_text}</figcaption>}
           </figure>
         )}
 
         <TipTapRenderer content={post.content} />
+
+        {Array.isArray(post.attachments) && post.attachments.length > 0 && (
+          <section className="article-attachments">
+            <h2>Attachments</h2>
+            <ul className="attachment-list">
+              {post.attachments.map((m) => (
+                <li key={m.id} className="attachment-item">
+                  {m.media_type === 'video' ? (
+                    <video src={m.file_url} controls preload="metadata" playsInline />
+                  ) : (
+                    <a href={m.file_url} target="_blank" rel="noopener noreferrer">
+                      {m.file_name || 'Download'}
+                    </a>
+                  )}
+                  {m.file_name && m.media_type === 'video' ? <span>{m.file_name}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <div className="article-footer">
           <Link to="/">← Back to home</Link>

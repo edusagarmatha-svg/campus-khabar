@@ -984,3 +984,25 @@ Unavailable actions: no user deletion endpoint (only create/update/activate/deac
 - Dashboard endpoint verified live with Admin and Editor tokens (200 + data) and unauthenticated (401).
 - Migration status on dev DB: 7 completed, 0 pending.
 - No credentials, schema redesigns, public-portal changes, commits, or pushes were made. Cloudinary secret still needs replacement in `.env` followed by a backend restart.
+
+---
+
+## 16. Media presentation and article editing UX (implemented, uncommitted)
+
+### Scope
+- Fixed oversized video rendering across public article pages, attachments, admin Media Library, Media Picker, and the TipTap editor surface.
+- Added responsive video containers with consistent aspect ratios, `object-fit: contain`, accessible controls, and no horizontal overflow.
+- Redesigned Media Library cards to use compact uniform thumbnail containers for both images and videos; full-size videos are no longer rendered directly in the grid.
+- Improved article editor media flow so images and videos can be inserted between paragraphs with constrained previews.
+
+### Files changed
+- `frontend/src/styles/public.css`
+- `frontend/src/styles/index.css` (via shared staff UI stylesheet)
+- `frontend/src/pages/MediaLibrary.jsx`
+- `frontend/src/components/media/MediaPicker.jsx`
+- `frontend/src/pages/PostEditor.jsx`
+- `frontend/src/pages/public/Article.jsx`
+
+### Verification
+- Frontend production build: `vite build` succeeded.
+- Backend tests remain green (72/72) after prior video support work.

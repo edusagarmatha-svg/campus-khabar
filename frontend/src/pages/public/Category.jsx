@@ -62,14 +62,17 @@ export default function Category() {
       {loading ? (
         <p>Loading…</p>
       ) : posts.length === 0 ? (
-        <p className="muted">No posts in this category yet.</p>
+        <div className="empty-state">
+          <h3>No stories yet</h3>
+          <p>Check back soon for updates in this category.</p>
+        </div>
       ) : (
         <>
           <div className="listing-grid">
             {posts.map((post) => (
               <article key={post.id} className="listing-card">
-                {post.cover_image && post.cover_image.file_url && (
-                  <Link to={`/posts/${post.slug}`} className="listing-media">
+                <Link to={`/posts/${post.slug}`} className="listing-media">
+                  {post.cover_image && post.cover_image.file_url ? (
                     <img
                       src={post.cover_image.file_url}
                       alt={post.cover_image.alt_text || post.title}
@@ -78,8 +81,10 @@ export default function Category() {
                       loading="lazy"
                       decoding="async"
                     />
-                  </Link>
-                )}
+                  ) : (
+                    <div className="image-placeholder" aria-hidden="true" />
+                  )}
+                </Link>
                 <div className="listing-body">
                   <h2 className="listing-title">
                     <Link to={`/posts/${post.slug}`}>{post.title}</Link>

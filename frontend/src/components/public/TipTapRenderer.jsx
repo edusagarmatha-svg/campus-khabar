@@ -94,6 +94,19 @@ function renderNode(node, key) {
       return <hr key={key} />;
     case 'hardBreak':
       return <br key={key} />;
+    case 'video': {
+      const src = node.attrs && node.attrs.src;
+      if (!src) return null;
+      const alt = (node.attrs && node.attrs.alt) || '';
+      return (
+        <figure key={key} className="article-video">
+          <video src={src} controls preload="metadata" playsInline>
+            Your browser does not support the video tag.
+          </video>
+          {alt ? <figcaption>{alt}</figcaption> : null}
+        </figure>
+      );
+    }
     case 'image': {
       const src = node.attrs && node.attrs.src;
       if (!src) return null;
