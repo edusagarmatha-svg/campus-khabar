@@ -17,3 +17,5 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+# Local media storage volume (development fallback for MEDIA_STORAGE_PATH)
+backend/var/

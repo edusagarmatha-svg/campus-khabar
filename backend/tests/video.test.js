@@ -1,7 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const bcrypt = require('bcrypt');
 const request = require('supertest');
+
+// Keep any upload attempt out of the developer's real storage volume. Must be
+// set before src/config/env is loaded, which resolves the storage directories.
+const TEST_STORAGE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'campus-kabar-video-'));
+process.env.MEDIA_STORAGE_PATH = TEST_STORAGE_ROOT;
 
 const env = require('../src/config/env');
 const db = require('../src/db/knex');
@@ -100,23 +109,28 @@ test.after(async () => {
     await db('users').whereIn('id', ids).delete();
   }
   await db.destroy();
+  await fsp.rm(TEST_STORAGE_ROOT, { recursive: true, force: true });
 });
 
-test('video upload configuration rejects unknown media types', async () => {
+test('video upload rejects unknown media types and missing files', async () => {
   const editor = await createUser({ role: 'editor' });
   const token = await login(editor);
 
-  await request(app)
-    .post('/api/media/signature')
-    .set(authHeader(token))
-    .send({ media_type: 'audio' })
-    .expect(400);
-
+  // Only image, video and document exist; "audio" is not a media type.
   await request(app)
     .post('/api/media')
     .set(authHeader(token))
-    .send({ media_type: 'video', public_id: 'some/public/id' })
-    .expect(503);
+    .field('media_type', 'audio')
+    .attach('file', Buffer.from('not a real file'), 'sound.mp3')
+    .expect(400);
+
+  // A declared video with no file attached never reaches storage.
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'video')
+    .expect(400);
+  assert.equal(res.body.error.code, 'FILE_REQUIRED');
 });
 
 test('inline video requires linked media', async () => {

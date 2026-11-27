@@ -195,9 +195,20 @@ const db = {
 
 const localDbHosts = new Set(['127.0.0.1', 'localhost', '::1']);
 
-if (isProduction && !localDbHosts.has(db.host) && !dbSslEnabled) {
+// Hosts reachable only over a provider's isolated private network. Railway
+// resolves `*.railway.internal` on a per-project IPv6 network that no other
+// project or the public internet can reach, and its managed MySQL does not
+// terminate TLS there, so requiring DB_SSL for those hosts would just block
+// startup without adding protection. Any other remote host must still use TLS.
+const PRIVATE_NETWORK_HOST = /\.railway\.internal$/i;
+
+function isPrivateNetworkHost(host) {
+  return localDbHosts.has(host) || PRIVATE_NETWORK_HOST.test(host);
+}
+
+if (isProduction && !isPrivateNetworkHost(db.host) && !dbSslEnabled) {
   errors.push(
-    'DB_SSL must be true when NODE_ENV=production and DB_HOST is not localhost',
+    'DB_SSL must be true when NODE_ENV=production and DB_HOST is not localhost or a *.railway.internal private host',
   );
 }
 
@@ -324,24 +335,59 @@ function readTrustProxy() {
 
 const trustProxy = readTrustProxy();
 
-// --- Cloudinary (media storage) ------------------------------------------
-// All three values are required to enable uploads. When any is missing the
-// media endpoints report "not configured" instead of crashing startup, so
-// local development and tests work without Cloudinary credentials.
-const cloudinaryCloudName = (process.env.CLOUDINARY_CLOUD_NAME || '').trim();
-const cloudinaryApiKey = (process.env.CLOUDINARY_API_KEY || '').trim();
-const cloudinaryApiSecret = (process.env.CLOUDINARY_API_SECRET || '').trim();
-const cloudinaryFolder = (process.env.CLOUDINARY_UPLOAD_FOLDER || 'campus-kabar').trim();
+// --- Media storage (persistent volume) -----------------------------------
+// Uploaded media is written to a persistent volume and served by this process
+// under /uploads, so the deployment has no third-party media dependency.
+//
+// MEDIA_STORAGE_PATH is the volume's mount point. Two directories live under
+// it: `media/`, which is served over HTTP, and `tmp/`, which holds in-flight
+// uploads and is never served. Production must set it explicitly; development
+// falls back to a gitignored directory inside the repository.
+const DEV_STORAGE_ROOT = path.join(__dirname, '..', '..', 'var', 'storage');
 
-const cloudinaryConfigured = Boolean(
-  cloudinaryCloudName && cloudinaryApiKey && cloudinaryApiSecret,
-);
+const storageRoot = (process.env.MEDIA_STORAGE_PATH || '').trim()
+  || (isProduction ? '' : DEV_STORAGE_ROOT);
 
-if (isProduction && !cloudinaryConfigured) {
-  errors.push(
-    'CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are required when NODE_ENV=production',
-  );
+if (!storageRoot) {
+  errors.push('MEDIA_STORAGE_PATH is required when NODE_ENV=production');
+} else if (!path.isAbsolute(storageRoot) && isProduction) {
+  errors.push(`MEDIA_STORAGE_PATH must be an absolute path; got "${storageRoot}"`);
 }
+
+const storageMediaDir = storageRoot ? path.join(storageRoot, 'media') : '';
+const storageTmpDir = storageRoot ? path.join(storageRoot, 'tmp') : '';
+
+// Fail at startup rather than on the first upload: an unmounted or read-only
+// volume is a deployment fault, and discovering it here keeps a broken
+// instance from accepting traffic.
+if (storageRoot) {
+  try {
+    fs.mkdirSync(storageMediaDir, { recursive: true });
+    fs.mkdirSync(storageTmpDir, { recursive: true });
+    fs.accessSync(storageMediaDir, fs.constants.W_OK);
+    fs.accessSync(storageTmpDir, fs.constants.W_OK);
+  } catch (error) {
+    errors.push(
+      `MEDIA_STORAGE_PATH is not writable (${error.code || 'file error'}): ${storageRoot}`,
+    );
+  }
+}
+
+// --- Frontend bundle ------------------------------------------------------
+// This process serves the built single-page app from the same origin as the
+// API, which is what lets the browser keep using relative /api requests and a
+// same-site refresh cookie. When the directory is absent (local API-only
+// development, tests) the API still serves /api and the SEO files.
+const frontendDistPath = (process.env.FRONTEND_DIST_PATH || '').trim()
+  || path.join(__dirname, '..', '..', '..', 'frontend', 'dist');
+
+const frontendDistAvailable = (() => {
+  try {
+    return fs.statSync(path.join(frontendDistPath, 'index.html')).isFile();
+  } catch {
+    return false;
+  }
+})();
 
 // --- Rate limiting -------------------------------------------------------
 // Applied to authentication endpoints. In test mode the limit is effectively
@@ -412,11 +458,13 @@ module.exports = Object.freeze({
     authMax: authRateLimitMax,
     disabled: rateLimitDisabled,
   }),
-  cloudinary: Object.freeze({
-    configured: cloudinaryConfigured,
-    cloudName: cloudinaryCloudName,
-    apiKey: cloudinaryApiKey,
-    apiSecret: cloudinaryApiSecret,
-    folder: cloudinaryFolder,
+  storage: Object.freeze({
+    root: storageRoot,
+    mediaDir: storageMediaDir,
+    tmpDir: storageTmpDir,
+  }),
+  frontend: Object.freeze({
+    distPath: frontendDistPath,
+    available: frontendDistAvailable,
   }),
 });

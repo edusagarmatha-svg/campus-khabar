@@ -29,7 +29,7 @@ This procedure is for an existing, active Admin who has lost access. It does not
 
 4. **Verify the reset.** Confirm an old session can no longer refresh and that the Admin can log in with the new password. The script reports the number of revoked sessions.
 
-5. **Rotate related credentials.** If the account was compromised, rotate the Admin password, review Cloudinary and database credentials, review recent content/staff changes, and invalidate any other exposed secrets. Rotating `JWT_ACCESS_SECRET` immediately invalidates outstanding access tokens; also revoke refresh tokens in the database (or reset the affected accounts) to terminate sessions completely.
+5. **Rotate related credentials.** If the account was compromised, rotate the Admin password, review the database credentials, review recent content/staff changes, and invalidate any other exposed secrets. Rotating `JWT_ACCESS_SECRET` immediately invalidates outstanding access tokens; also revoke refresh tokens in the database (or reset the affected accounts) to terminate sessions completely.
 
 6. **Record the event.** Note the date, operator, account, reason, backup reference, and actions taken in the incident or operations log. Do not record the password.
 

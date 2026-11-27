@@ -1,3 +1,5 @@
+const path = require('node:path');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -23,8 +25,36 @@ app.set('trust proxy', env.trustProxy);
 // Do not advertise the framework in responses.
 app.disable('x-powered-by');
 
-// Security headers.
-app.use(helmet());
+// Security headers. The default Content-Security-Policy is tightened and made
+// explicit because this process now serves the single-page app as well as the
+// API: scripts and styles come only from this origin, media and images may
+// also be object URLs the editor creates for local previews, and nothing may
+// frame the site. React sets element styles as inline style attributes, which
+// CSP only permits with 'unsafe-inline' in style-src.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        'default-src': ["'self'"],
+        'script-src': ["'self'"],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'img-src': ["'self'", 'data:', 'blob:'],
+        'media-src': ["'self'", 'blob:'],
+        'font-src': ["'self'", 'data:'],
+        'connect-src': ["'self'"],
+        'object-src': ["'none'"],
+        'base-uri': ["'self'"],
+        'form-action': ["'self'"],
+        'frame-ancestors': ["'none'"],
+        ...(env.isProduction ? { 'upgrade-insecure-requests': [] } : {}),
+      },
+    },
+    // Media is served from this origin to this origin; the default
+    // same-origin policy is correct and needs no relaxation.
+    crossOriginResourcePolicy: { policy: 'same-origin' },
+  }),
+);
 
 // Only the configured frontend origins may call the API from a browser, with
 // credentials so the HttpOnly refresh-token cookie is sent.
@@ -74,6 +104,58 @@ app.use('/api/admin/dashboard', dashboardRoutes);
 // Public SEO files are served from the API so they can be generated from the
 // live database. A reverse proxy should expose these at the site root.
 app.use('/', seoRoutes);
+
+// Uploaded media lives on the persistent volume. Stored paths contain a UUID
+// and never change, so the bytes are immutable and can be cached hard. The
+// directory is served read-only: no directory listings, no dotfiles, and only
+// safe methods.
+app.use(
+  '/uploads',
+  (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return res.status(405).json({
+        error: { code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' },
+      });
+    }
+    return next();
+  },
+  express.static(env.storage.mediaDir, {
+    index: false,
+    dotfiles: 'deny',
+    redirect: false,
+    maxAge: '365d',
+    immutable: true,
+  }),
+);
+
+// The built single-page app, served from the same origin as the API so the
+// browser keeps using relative /api requests and a same-site refresh cookie.
+// Hashed assets under /assets are immutable; index.html must never be cached,
+// or a returning browser boots a stale bundle against a newer API.
+if (env.frontend.available) {
+  app.use(
+    express.static(env.frontend.distPath, {
+      index: false,
+      dotfiles: 'ignore',
+      setHeaders(res, filePath) {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    }),
+  );
+
+  // Client-side routing fallback. Only GET/HEAD requests for paths the API
+  // does not own fall through to the app shell, so an unknown /api or
+  // /uploads path still returns the JSON 404 below instead of HTML.
+  app.get(/^\/(?!api\/|uploads\/).*/, (req, res, next) => {
+    res.sendFile(path.join(env.frontend.distPath, 'index.html'), (error) => {
+      if (error) next(error);
+    });
+  });
+}
 
 app.use((req, res) => {
   res.status(404).json({

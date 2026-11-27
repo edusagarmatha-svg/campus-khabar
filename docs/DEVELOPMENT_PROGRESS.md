@@ -1047,3 +1047,80 @@ Unavailable actions: no user deletion endpoint (only create/update/activate/deac
 ### Verification
 - Frontend production build: `vite build` succeeded.
 - Backend tests remain green (72/72) after prior video support work.
+
+## 21. Media storage moved from Cloudinary to a persistent volume; Railway deployment (implemented, uncommitted, not yet deployed)
+
+Date: 2026-11-27. Branch `feat/railway-volume-storage`.
+
+### Decision
+
+Media is no longer stored with a third-party provider. Uploads are
+received by the API and written to a persistent volume mounted at
+`MEDIA_STORAGE_PATH`, served read-only from `/uploads`. The same Express
+process now also serves the built frontend, making the whole product one
+origin and one deployable service.
+
+The one-origin shape is not cosmetic: `frontend/src/api/client.js` uses a
+relative `/api` base and the refresh cookie is same-site, so the app and
+the API cannot be split across two hosts without an absolute API base
+URL, real CORS, and a cross-site cookie strategy. Serving the bundle from
+Express is therefore a deliberate reversal of the earlier "the API does
+not serve the frontend bundle" note in the README.
+
+Trade-off accepted: file bytes now pass through the API (streamed to
+disk, never buffered in memory), and the service is pinned to a single
+replica because a volume cannot be attached to two instances.
+
+### Backend
+
+| File | Change |
+| --- | --- |
+| `src/services/storageService.js` | **New.** The whole storage contract: layout `media/<env>/<type>/<yyyy>/<mm>/<uuid>.<ext>`, per-type size limits, allowed formats, magic-byte sniffing, `commitUpload`, `saveBuffer`, `deleteByKey`, `exists`, `pruneTempFiles`, `publicUrlFor`. `resolveKey` refuses any key that escapes the media root. |
+| `src/services/cloudinaryService.js` | **Deleted.** |
+| `src/config/env.js` | Cloudinary block replaced by a storage block. `MEDIA_STORAGE_PATH` is required and absolute in production, with a `backend/var/storage` development fallback; `media/` and `tmp/` are created and write-checked at require time, so an unmounted or read-only volume fails startup instead of the first upload. New `FRONTEND_DIST_PATH` with an availability probe. A `*.railway.internal` DB host is now exempt from the production `DB_SSL` requirement: that traffic stays on the project-private network, which the managed database does not expose over TLS. |
+| `src/services/mediaService.js` | `registerUploadedMedia` → `storeUploadedMedia`, which commits the temp file through the storage service and deletes the stored file if the insert fails. Deletion of a local upload removes its file. |
+| `src/routes/mediaRoutes.js` | `POST /media/signature` removed. `POST /media` now takes multipart form data: multer `diskStorage` into the volume's `tmp/`, 100 MB hard ceiling, one file, field validation run after parsing with the temp file cleaned up on rejection. Multer errors are mapped to `413 ASSET_TOO_LARGE` / `400 INVALID_UPLOAD`. |
+| `src/controllers/mediaController.js` | `signature` removed; `upload` added, rejecting a missing file with `400 FILE_REQUIRED`. |
+| `src/app.js` | `/uploads` served with `express.static` (no index, no dotfiles, immutable 1-year cache) behind a guard that answers `405` to anything but GET/HEAD. The frontend bundle is served when present, with `no-cache` on HTML and immutable on hashed assets, plus an SPA fallback that deliberately excludes `/api/*` and `/uploads/*` so those still return JSON 404s. `helmet()`'s defaults replaced with an explicit CSP, now that one origin serves both the app and its media (`style-src` allows inline styles, which React's `style` props require). |
+| `src/server.js` | Abandoned `tmp/` files are pruned at boot; a failure there is logged, not fatal. |
+| `src/scripts/migrate-cloudinary-media.js` | **New** (`npm run migrate-media`, `--dry-run`). Downloads each non-local media row, re-validates it through the normal storage path, repoints the row, and rewrites the absolute provider URLs embedded in `posts.content` and `post_revisions.content` — those are the reason a media-table-only migration would have left broken images in article bodies. Each rewritten document is re-parsed as JSON before being written back. Idempotent; exits non-zero listing anything it could not fetch. |
+| `package.json` | `cloudinary` removed; `multer` and `image-size` added. |
+
+### Frontend
+
+`src/api/media.js`: `getUploadSignature` and `registerMedia` replaced by a
+single `uploadMedia(file, mediaType, altText)` posting `FormData`.
+`client.js` already omitted the JSON content type for `FormData` bodies,
+and `MediaPicker`/`MediaLibrary` already rendered `file_url` directly, so
+neither needed changes.
+
+### Deployment
+
+`Dockerfile` (three stages: build the bundle with `VITE_PUBLIC_SITE_URL`
+as a build arg, install production dependencies, assemble the runtime),
+`.dockerignore`, and `railway.json` (Dockerfile builder, `/api/health`
+healthcheck, one replica). The container applies migrations and then
+starts the API. `backend/.env.example` and the README's architecture,
+prerequisites, production, deployment and verification sections were
+rewritten; §7, §9, §9's integrity split and §14 of the project guide now
+describe volume storage.
+
+### Verification
+
+- Backend suite: **80 tests, 80 pass, 0 fail** against a disposable
+  MySQL 8 on port 3308. Nine are new and cover the storage path
+  specifically: a stored upload is served from `/uploads` with an
+  immutable cache header; `/uploads` is public but non-enumerable and
+  refuses non-GET; a PDF renamed `.png` and a PNG declared as video are
+  both rejected on contents; an oversized image returns `413`; a
+  rejected upload leaves `tmp/` empty; deleting a media row removes its
+  file. Media tests write to a `mkdtemp` directory, never to a
+  configured volume.
+- `node --check` passes on every backend source file.
+- Frontend: `vite build` succeeded. `eslint` reports 9 pre-existing
+  problems, identical in count and location to `main` — none introduced
+  here, none fixed here.
+- `docker build` of the deployment image succeeded.
+- **Not yet done:** no commit, no push, and no Railway deployment. The
+  supplied database dump has not been imported anywhere, and
+  `npm run migrate-media` has not been run against real data.

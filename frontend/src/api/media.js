@@ -18,30 +18,16 @@ export async function deleteMedia(id) {
   await apiJson(`/media/${id}`, { method: 'DELETE' });
 }
 
-export async function getUploadSignature(mediaType) {
-  const data = await apiJson('/media/signature', {
-    method: 'POST',
-    body: JSON.stringify({ media_type: mediaType }),
-  });
-  return data.data;
-}
-
-export async function registerMedia(payload) {
-  const data = await apiJson('/media', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return data.data;
-}
-
 const MEDIA_LIMITS = {
   image: 5 * 1024 * 1024,
   video: 100 * 1024 * 1024,
+  document: 10 * 1024 * 1024,
 };
 
 const ALLOWED_MIME = {
   image: ['image/jpeg', 'image/png', 'image/webp'],
   video: ['video/mp4', 'video/webm'],
+  document: ['application/pdf'],
 };
 
 export function validateMediaFile(file, mediaType) {
@@ -72,32 +58,23 @@ export function getImageDimensions(file) {
   });
 }
 
+/**
+ * Uploads a file to the API, which stores it on the server's persistent volume
+ * and returns the created media row. The bytes go to our own origin, so there
+ * is no third-party upload step and no signature to fetch first.
+ *
+ * The checks above are a convenience for the person uploading; the server
+ * validates the real file contents again and is the authority.
+ */
 export async function uploadMedia(file, mediaType, altText = '') {
   validateMediaFile(file, mediaType);
-  const signature = await getUploadSignature(mediaType);
-  const resourceType = signature.resource_type;
-  const url = `https://api.cloudinary.com/v1_1/${signature.cloud_name}/${resourceType}/upload`;
 
   const formData = new FormData();
+  formData.append('media_type', mediaType);
+  formData.append('file_name', file.name);
+  if (altText) formData.append('alt_text', altText);
   formData.append('file', file);
-  formData.append('api_key', signature.api_key);
-  formData.append('timestamp', signature.timestamp);
-  formData.append('signature', signature.signature);
-  formData.append('folder', signature.folder);
-  formData.append('allowed_formats', signature.allowed_formats);
 
-  const res = await fetch(url, { method: 'POST', body: formData });
-  const data = await res.json();
-  if (!res.ok) {
-    const err = new Error(data?.error?.message || 'Upload failed');
-    err.status = res.status;
-    throw err;
-  }
-
-  return registerMedia({
-    media_type: mediaType,
-    public_id: data.public_id,
-    file_name: file.name,
-    alt_text: altText,
-  });
+  const data = await apiJson('/media', { method: 'POST', body: formData });
+  return data.data;
 }

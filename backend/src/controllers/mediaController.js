@@ -1,5 +1,5 @@
 const mediaService = require('../services/mediaService');
-const cloudinaryService = require('../services/cloudinaryService');
+const { httpError } = require('../utils/errors');
 
 async function list(req, res) {
   const result = await mediaService.listMedia(req.user, req.query, {
@@ -14,13 +14,23 @@ async function getById(req, res) {
   res.status(200).json({ data: media });
 }
 
-async function signature(req, res) {
-  const result = cloudinaryService.generateUploadSignature(req.body.media_type);
-  res.status(200).json({ data: result });
-}
+/**
+ * Receives a multipart upload. The upload middleware has already streamed the
+ * bytes to a temporary file on the volume; the service validates the real file
+ * contents, moves it into place and records the row.
+ */
+async function upload(req, res) {
+  if (!req.file) {
+    throw httpError(400, 'FILE_REQUIRED', 'A file field named "file" is required');
+  }
 
-async function register(req, res) {
-  const media = await mediaService.registerUploadedMedia(req.user, req.body);
+  const media = await mediaService.storeUploadedMedia(req.user, {
+    media_type: req.body.media_type,
+    temp_path: req.file.path,
+    file_name: req.body.file_name || req.file.originalname,
+    alt_text: req.body.alt_text,
+  });
+
   res.status(201).json({ data: media });
 }
 
@@ -29,4 +39,4 @@ async function remove(req, res) {
   res.status(204).send();
 }
 
-module.exports = { list, getById, signature, register, remove };
+module.exports = { list, getById, upload, remove };

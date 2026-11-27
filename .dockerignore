@@ -1,0 +1,17 @@
+# Everything the build should never see: host dependencies, local secrets,
+# build output and git history. Each stage installs its own dependencies.
+**/node_modules
+**/dist
+**/build
+backend/var
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+docs
+README.md
+railway.json
+Dockerfile
+.dockerignore

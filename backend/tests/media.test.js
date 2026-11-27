@@ -1,17 +1,44 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const bcrypt = require('bcrypt');
 const request = require('supertest');
+
+// Uploads must land in a throwaway directory, never in the developer's real
+// storage volume. This has to happen before src/config/env is loaded, because
+// that module resolves and creates the storage directories on require.
+const TEST_STORAGE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'campus-kabar-media-'));
+process.env.MEDIA_STORAGE_PATH = TEST_STORAGE_ROOT;
 
 const env = require('../src/config/env');
 const db = require('../src/db/knex');
 const app = require('../src/app');
+const storageService = require('../src/services/storageService');
 
 if (env.db.database !== 'campus_kabar_test') {
   throw new Error(`Refusing to run media tests against database "${env.db.database}"`);
 }
 if (env.db.port !== 3308) {
   throw new Error(`Refusing to run media tests against port ${env.db.port}; expected 3308`);
+}
+
+// A 1x1 PNG, a 1x1 JPEG and a minimal PDF. Real signatures matter: the server
+// identifies files by their leading bytes and ignores the declared MIME type.
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+  'base64',
+);
+const JPEG_1X1 = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwcJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDc0NP/AABEIAAEAAQMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAAwDAQACEQMRAD8A/v4oooA//9k=',
+  'base64',
+);
+const PDF_MINIMAL = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n', 'utf8');
+
+function uploadedPath(media) {
+  return path.join(storageService.mediaRoot(), media.storage_key);
 }
 
 const createdUserIds = new Set();
@@ -94,17 +121,21 @@ test.after(async () => {
     await db('users').whereIn('id', ids).delete();
   }
   await db.destroy();
+  await fsp.rm(TEST_STORAGE_ROOT, { recursive: true, force: true });
 });
 
 test('unauthenticated media requests are rejected', async () => {
   await request(app).get('/api/media').expect(401);
   await request(app).get('/api/media/1').expect(401);
-  await request(app).post('/api/media/signature').send({ media_type: 'image' }).expect(401);
-  await request(app).post('/api/media').send({ media_type: 'image', public_id: 'x' }).expect(401);
+  await request(app)
+    .post('/api/media')
+    .field('media_type', 'image')
+    .attach('file', PNG_1X1, 'tiny.png')
+    .expect(401);
   await request(app).delete('/api/media/1').expect(401);
 });
 
-test('editor can list own media; signature/register unavailable without Cloudinary', async () => {
+test('editor can list own media', async () => {
   const editor = await createUser({ role: 'editor' });
   const token = await login(editor);
 
@@ -114,19 +145,182 @@ test('editor can list own media; signature/register unavailable without Cloudina
     .set(authHeader(token))
     .expect(200);
   assert.ok(listRes.body.data.some((m) => m.id === mediaId));
+});
 
-  // Cloudinary not configured in test env
-  await request(app)
-    .post('/api/media/signature')
+test('editor uploads an image, which is stored on the volume and served', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  const res = await request(app)
+    .post('/api/media')
     .set(authHeader(token))
-    .send({ media_type: 'image' })
-    .expect(503);
+    .field('media_type', 'image')
+    .field('alt_text', 'A tiny test image')
+    .attach('file', PNG_1X1, 'tiny.png')
+    .expect(201);
+
+  const media = res.body.data;
+  createdMediaIds.add(media.id);
+
+  assert.equal(media.media_type, 'image');
+  assert.equal(media.source_type, 'upload');
+  assert.equal(media.storage_provider, 'local');
+  assert.equal(media.mime_type, 'image/png');
+  assert.equal(media.file_size, PNG_1X1.length);
+  assert.equal(media.alt_text, 'A tiny test image');
+  assert.equal(media.file_name, 'tiny.png');
+  assert.equal(media.width, 1);
+  assert.equal(media.height, 1);
+
+  // The URL is relative so it keeps working across domains and environments.
+  assert.match(media.file_url, /^\/uploads\/test\/image\/\d{4}\/\d{2}\/[0-9a-f-]{36}\.png$/);
+  assert.equal(media.file_url, `/uploads/${media.storage_key}`);
+
+  // The bytes really are on the volume, and the API serves them back.
+  assert.deepEqual(await fsp.readFile(uploadedPath(media)), PNG_1X1);
+
+  const fileRes = await request(app).get(media.file_url).expect(200);
+  assert.equal(fileRes.headers['content-type'], 'image/png');
+  assert.match(fileRes.headers['cache-control'], /immutable/);
+  assert.deepEqual(fileRes.body, PNG_1X1);
+});
+
+test('uploaded media is public without authentication but the directory is not browsable', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'image')
+    .attach('file', JPEG_1X1, 'tiny.jpg')
+    .expect(201);
+  createdMediaIds.add(res.body.data.id);
+
+  // No Authorization header: published articles must load for readers.
+  await request(app).get(res.body.data.file_url).expect(200);
+
+  // Directory listings and writes through the media path are refused.
+  await request(app).get('/uploads/test/image/').expect(404);
+  await request(app).post(res.body.data.file_url).expect(405);
+});
+
+test('a document upload is accepted and typed from its contents', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'document')
+    .attach('file', PDF_MINIMAL, 'notice.pdf')
+    .expect(201);
+  createdMediaIds.add(res.body.data.id);
+
+  assert.equal(res.body.data.mime_type, 'application/pdf');
+  assert.equal(res.body.data.media_type, 'document');
+  assert.match(res.body.data.storage_key, /^test\/document\//);
+});
+
+test('a file whose contents do not match its name or declared type is rejected', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  // A PDF renamed to .png and declared image/png: only the bytes are trusted.
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'image')
+    .attach('file', PDF_MINIMAL, { filename: 'disguised.png', contentType: 'image/png' })
+    .expect(400);
+  assert.equal(res.body.error.code, 'INVALID_ASSET_FORMAT');
+
+  // An image uploaded as a video is a type mismatch, not a valid video.
+  const mismatch = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'video')
+    .attach('file', PNG_1X1, 'clip.mp4')
+    .expect(400);
+  assert.equal(mismatch.body.error.code, 'INVALID_ASSET_FORMAT');
+
+  // An unknown media type never reaches storage.
+  await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'audio')
+    .attach('file', PNG_1X1, 'sound.mp3')
+    .expect(400);
+});
+
+test('an oversized image is rejected with 413', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  // Valid PNG header followed by padding, one byte over the 5 MB image limit.
+  const oversized = Buffer.concat([
+    PNG_1X1,
+    Buffer.alloc(storageService.MEDIA_LIMITS.image + 1 - PNG_1X1.length, 0),
+  ]);
+
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'image')
+    .attach('file', oversized, 'big.png')
+    .expect(413);
+  assert.equal(res.body.error.code, 'ASSET_TOO_LARGE');
+});
+
+test('a rejected upload leaves nothing behind on the volume', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
 
   await request(app)
     .post('/api/media')
     .set(authHeader(token))
-    .send({ media_type: 'image', public_id: 'some/public/id' })
-    .expect(503);
+    .field('media_type', 'image')
+    .attach('file', PDF_MINIMAL, 'disguised.png')
+    .expect(400);
+
+  const leftovers = await fsp.readdir(storageService.tmpRoot());
+  assert.deepEqual(leftovers, [], 'temporary upload files must be cleaned up');
+});
+
+test('a missing file field is rejected before touching storage', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'image')
+    .expect(400);
+  assert.equal(res.body.error.code, 'FILE_REQUIRED');
+});
+
+test('deleting an uploaded media row removes its file from the volume', async () => {
+  const editor = await createUser({ role: 'editor' });
+  const token = await login(editor);
+
+  const res = await request(app)
+    .post('/api/media')
+    .set(authHeader(token))
+    .field('media_type', 'image')
+    .attach('file', PNG_1X1, 'to-delete.png')
+    .expect(201);
+
+  const media = res.body.data;
+  const filePath = uploadedPath(media);
+  assert.equal(fs.existsSync(filePath), true);
+
+  await request(app)
+    .delete(`/api/media/${media.id}`)
+    .set(authHeader(token))
+    .expect(204);
+
+  assert.equal(fs.existsSync(filePath), false);
+  await request(app).get(media.file_url).expect(404);
 });
 
 test('admin can list all media', async () => {

@@ -295,8 +295,8 @@ discussed before changing it.
                                                   content and inline
                                                   media
 
-  Media storage           Cloudinary or suitable  Image, video, and
-                          object storage          document files
+  Media storage           Persistent volume on    Image, video, and
+                          the application host    document files
 
   Authentication          JWT access tokens +     Staff authentication
                           opaque rotating         and password hashing
@@ -507,10 +507,10 @@ reusable across posts.
 | ------------------- | ------------------- | ---- | -------------------------------------------------------- |
 | `id`                | BIGINT UNSIGNED PK  | no   | Auto-increment                                           |
 | `media_type`        | VARCHAR(16)         | no   | `image`, `video`, `document`                             |
-| `source_type`       | VARCHAR(16)         | no   | `upload` (Cloudinary) or `external` (embed)              |
-| `storage_provider`  | VARCHAR(32)         | no   | e.g. `cloudinary`, `youtube`; keeps documents portable   |
-| `storage_key`       | VARCHAR(512)        | no   | Cloudinary `public_id`, or provider video ID             |
-| `file_url`          | VARCHAR(1024)       | no   | Delivery URL                                             |
+| `source_type`       | VARCHAR(16)         | no   | `upload` (stored on the volume) or `external` (embed)    |
+| `storage_provider`  | VARCHAR(32)         | no   | `local`, or an embed provider such as `youtube`          |
+| `storage_key`       | VARCHAR(512)        | no   | Path under the volume's `media/`, or provider video ID   |
+| `file_url`          | VARCHAR(1024)       | no   | `/uploads/…` for uploads (relative); absolute for embeds |
 | `file_name`         | VARCHAR(255)        | yes  | Original or generated name                               |
 | `mime_type`         | VARCHAR(127)        | no   | Verified server-side, never trusted from the client      |
 | `file_size`         | BIGINT UNSIGNED     | yes  | Bytes; NULL only for external embeds                     |
@@ -530,9 +530,11 @@ Constraints:
     uploads and makes metadata registration idempotent.
 
 Accepted formats: images JPG/JPEG/PNG/WebP up to 5 MB; video MP4/WebM up
-to 100 MB; documents PDF and approved formats up to 10 MB. Formats and
-sizes are enforced during signed-upload validation and again by
-Cloudinary; the database enforces the structurally invalid cases.
+to 100 MB; documents PDF up to 10 MB. The size ceiling is enforced twice
+— once by the multipart parser, which aborts the request rather than
+reading an oversized body, and again against the file on disk. The
+format is determined from the file's leading bytes, not from its name or
+its declared type. The database enforces the structurally invalid cases.
 
 ### `post_media`
 
@@ -641,51 +643,62 @@ deleted in Version 1.
 | Referential integrity and delete rules                | Database    |
 | Media IDs in `posts.content` exist in `post_media`     | Service     |
 | `cover_media_id` belongs to an image and to the post's media set | Service |
-| Media metadata (size, MIME, dimensions, duration)      | Service, derived from Cloudinary |
+| Media metadata (size, MIME, dimensions, duration)      | Service, derived from the stored file |
 | Slug format, reserved words, slug rewrite on delete    | Service     |
 | Email normalisation and uniqueness case-insensitivity | Service + `utf8mb4_0900_ai_ci` |
 | Only one published revision / workflow transitions     | Service     |
 
 ### Media upload workflow
 
-The backend never proxies file bytes. The browser uploads directly to
-Cloudinary using a signature the backend generates, then registers the
-result so MySQL only ever holds verified metadata.
+Uploads are received by the API as multipart form data and stored on a
+persistent volume, so MySQL only ever holds metadata the backend
+measured itself.
 
 1.  Staff member selects a file. The client checks type and size for
-    fast feedback only.
-2.  The client requests `POST /api/media/signature` with the intended
-    `resource_type` and `usage_type`. The backend authenticates the
-    request, checks the role, maps `usage_type` to an allowed format and
-    size set (cover/gallery/inline image ≤ 5 MB; video ≤ 100 MB;
-    attachment document ≤ 10 MB), and returns `timestamp`, `folder`,
-    `allowed_formats`, `max_file_size`, `resource_type`, `public_id`,
-    and `signature`. The API secret never leaves the backend.
-3.  The browser posts the file and signed parameters to
-    `https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/upload`.
-    Cloudinary re-validates format and size and stores the object.
-4.  The browser sends the resulting `public_id` and `resource_type` to
-    `POST /api/media` — nothing else is trusted.
-5.  The backend calls the Cloudinary Admin API
-    (`GET /resources/<resource_type>/upload?public_id=…`, Basic auth) and
-    derives `file_url`, `file_name`, `mime_type`, `file_size`, `width`,
-    `height`, and `duration_seconds` from the response. Video duration
-    can be absent while transcoding is still running, so
-    `duration_seconds` stays nullable and the service retries or leaves
-    it empty.
-6.  The backend inserts the `media` row, deduplicating on
-    `(storage_provider, storage_key)`; repeated registration returns the
-    existing row. It then attaches the media to the post via
-    `post_media` with its `usage_type`, or sets `posts.cover_media_id`.
-7.  Rendering uses the stored `file_url`; inline content keeps media IDs
-    at their exact position in the JSON document.
+    fast feedback only; nothing it reports is trusted.
+2.  The client posts the file to `POST /api/media` as multipart form
+    data with `media_type` and optional `file_name` and `alt_text`. The
+    request is authenticated and role-checked before the body is read.
+3.  The multipart parser streams the bytes straight to a temporary file
+    under the volume's `tmp/` directory — never into memory, so a 100 MB
+    video costs no heap — and aborts the request at the 100 MB ceiling.
+    `tmp/` is deliberately outside the directory served over HTTP, so a
+    partial or rejected upload is never reachable by URL.
+4.  The backend reads the head of the file and identifies the format
+    from its magic bytes: JPEG, PNG, WebP, MP4, WebM or PDF. A file
+    whose real format is not allowed for the declared `media_type`, or
+    not recognised at all, is rejected with `400`. The per-type size
+    limit is checked against the file on disk (cover/gallery/inline
+    image ≤ 5 MB; video ≤ 100 MB; attachment document ≤ 10 MB), and an
+    oversized file is rejected with `413`.
+5.  The backend derives `mime_type`, `file_size` and, for images,
+    `width`/`height`. Video dimensions and `duration_seconds` stay NULL:
+    the runtime image carries no media probe, and those columns are
+    nullable by design.
+6.  The file is moved into its final place under
+    `media/<env>/<media_type>/<yyyy>/<mm>/<uuid>.<ext>`. The move is a
+    rename within one filesystem, so publication is atomic — a reader
+    sees the whole file or no file. The row is then inserted,
+    deduplicating on `(storage_provider, storage_key)`. If the insert
+    fails, the file is deleted, so a stored file always has a row.
+7.  Rendering uses the stored `file_url`, served from `/uploads/…` with
+    an immutable cache header (the UUID in the path never changes
+    meaning). Inline content keeps media IDs at their exact position in
+    the JSON document.
 
-Cloudinary restricts PDF/ZIP delivery on some account tiers. Verify the
-account's delivery settings before launch; `storage_provider`/
-`storage_key` keep the metadata portable to another provider. Direct
-browser upload is preferred over proxying through Express because it
-avoids buffering 100 MB videos in API memory and keeps delivery on the
-CDN.
+Deleting an uploaded media row deletes its file; a file already missing
+is not treated as an error, so a delete is always able to complete.
+Media still referenced by a post, a cover, or a pending revision is
+refused with `409` before anything is removed.
+
+Storing media on a volume rather than a third-party provider removes the
+signature exchange, the provider's tier restrictions on PDF delivery, and
+an external dependency from the upload path; the cost is that media
+bytes now flow through the API and that the service is pinned to a
+single replica, because a volume cannot be attached to two instances.
+`storage_provider` and `storage_key` still keep the metadata portable:
+moving to object storage later means a new storage implementation and a
+backfill, not a schema change.
 
 ## 10. Security and Quality Requirements
 
@@ -918,8 +931,10 @@ Resolved before Milestone 2:
     `password_hash` is NOT NULL; no reader accounts or reader login in
     Version 1.
 -   MySQL 8 with `mysql2` and Knex.js migrations.
--   Cloudinary as the initial media provider, with signed direct
-    browser uploads and backend verification.
+-   Media stored on a persistent volume attached to the application,
+    uploaded through the API and validated from file contents.
+    (Originally Cloudinary with signed direct browser uploads; replaced
+    on 2026-11-27 when the project moved to a single Railway service.)
 -   Images, real videos, and documents are all uploaded in Version 1;
     external video embeds are also allowed.
 -   Each post has exactly one category; the cover is stored on

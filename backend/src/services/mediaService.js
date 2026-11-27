@@ -1,6 +1,6 @@
 const db = require('../db/knex');
 const { httpError } = require('../utils/errors');
-const cloudinaryService = require('./cloudinaryService');
+const storageService = require('./storageService');
 
 function toPublicMedia(row) {
   if (!row) return null;
@@ -69,62 +69,49 @@ async function listMedia(user, filters = {}, pagination = {}) {
   };
 }
 
-async function registerUploadedMedia(user, payload) {
+/**
+ * Stores an uploaded file on the volume and records it in `media`.
+ *
+ * `tempPath` is a finished temporary file produced by the upload middleware.
+ * The storage layer validates the real bytes, moves the file to its permanent
+ * path and removes the temporary file on any failure, so a rejected upload
+ * leaves nothing on the volume. If the database insert fails after that move,
+ * the stored file is removed too rather than becoming an orphan.
+ */
+async function storeUploadedMedia(user, payload) {
   const mediaType = payload.media_type;
-  if (!cloudinaryService.ALLOWED_FORMATS[mediaType]) {
+
+  if (!storageService.ALLOWED_FORMATS[mediaType]) {
+    await storageService.removeQuietly(payload.temp_path);
     throw httpError(400, 'INVALID_MEDIA_TYPE', 'Invalid media type');
   }
 
-  if (!payload.public_id || typeof payload.public_id !== 'string') {
-    throw httpError(400, 'INVALID_PUBLIC_ID', 'public_id is required');
+  const stored = await storageService.commitUpload(mediaType, payload.temp_path);
+
+  try {
+    const [id] = await db('media').insert({
+      media_type: mediaType,
+      source_type: 'upload',
+      storage_provider: stored.storageProvider,
+      storage_key: stored.storageKey,
+      file_url: stored.fileUrl,
+      file_name: payload.file_name
+        ? String(payload.file_name).trim().slice(0, 255)
+        : null,
+      mime_type: stored.mimeType,
+      file_size: stored.bytes,
+      alt_text: payload.alt_text ? String(payload.alt_text).trim().slice(0, 255) : null,
+      width: stored.width,
+      height: stored.height,
+      duration_seconds: stored.durationSeconds,
+      uploaded_by: user.id,
+    });
+
+    return getMediaById(id);
+  } catch (error) {
+    await storageService.deleteByKey(stored.storageKey);
+    throw error;
   }
-
-  const publicId = payload.public_id.trim();
-  if (publicId.length === 0 || publicId.length > 512) {
-    throw httpError(400, 'INVALID_PUBLIC_ID', 'public_id is invalid');
-  }
-
-  const { resourceType, result } = await cloudinaryService.fetchResource(mediaType, publicId);
-
-  // Ensure the asset's resource type matches the requested media type.
-  if (result.resource_type && result.resource_type !== resourceType) {
-    throw httpError(400, 'ASSET_TYPE_MISMATCH', 'Asset resource type does not match');
-  }
-
-  const { bytes, mime } = cloudinaryService.validateResource(mediaType, result);
-
-  const width = result.width ? Number(result.width) : null;
-  const height = result.height ? Number(result.height) : null;
-  const duration = result.duration ? Number(result.duration) : null;
-
-  const storageProvider = 'cloudinary';
-  const storageKey = publicId;
-
-  const existing = await db('media')
-    .where({ storage_provider: storageProvider, storage_key: storageKey })
-    .first();
-
-  if (existing) {
-    return toPublicMedia(existing);
-  }
-
-  const [id] = await db('media').insert({
-    media_type: mediaType,
-    source_type: 'upload',
-    storage_provider: storageProvider,
-    storage_key: storageKey,
-    file_url: result.secure_url,
-    file_name: payload.file_name ? String(payload.file_name).trim().slice(0, 255) : (result.original_filename || null),
-    mime_type: mime,
-    file_size: bytes,
-    alt_text: payload.alt_text ? String(payload.alt_text).trim().slice(0, 255) : null,
-    width: Number.isFinite(width) ? width : null,
-    height: Number.isFinite(height) ? height : null,
-    duration_seconds: Number.isFinite(duration) ? duration : null,
-    uploaded_by: user.id,
-  });
-
-  return getMediaById(id);
 }
 
 async function getMediaReferences(mediaId) {
@@ -164,9 +151,11 @@ async function deleteMedia(user, id) {
     );
   }
 
-  // Only attempt remote deletion for uploaded assets.
-  if (media.source_type === 'upload' && media.storage_provider === 'cloudinary') {
-    await cloudinaryService.deleteResource(media.media_type, media.storage_key);
+  // Only locally stored uploads own a file on the volume. Externally hosted
+  // media (and any row left over from a previous storage provider) has no
+  // file here, so the row is simply removed.
+  if (media.source_type === 'upload' && media.storage_provider === storageService.STORAGE_PROVIDER) {
+    await storageService.deleteByKey(media.storage_key);
   }
 
   await db('media').where({ id: media.id }).delete();
@@ -176,7 +165,7 @@ module.exports = {
   toPublicMedia,
   getMediaById,
   listMedia,
-  registerUploadedMedia,
+  storeUploadedMedia,
   getMediaReferences,
   deleteMedia,
   canManageMedia,
