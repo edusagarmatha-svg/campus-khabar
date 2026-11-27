@@ -1,15 +1,56 @@
 # Campus Kabar — Development Progress Report
 
-**Date:** 17 November 2026
-**Branch:** `feat/content-management` (HEAD `a0cf68c`; doc-only correction committed on this branch)
-**Scope covered:** Milestone 0 (design), Milestone 2 (database foundation, `2a3eb31`), the Express backend foundation (`bb1d321`, merged into `develop` by PR #1 as `d055b53`), Stage 1 of Milestone 3 (authentication decisions, environment configuration, refresh-token migration, Admin bootstrap, committed as `8fbdf4d`), and Stage 2 of Milestone 3 (auth endpoints, middleware, wiring — implemented, verified, committed as `fd429a0`, and pushed to origin)
-**Report status:** factual snapshot of the working tree and the isolated test database. Stage 1 was verified against a disposable MySQL 8 container; the development database was not touched. Stage 1 and Stage 2 are committed on `feat/authentication` and pushed to origin.
+**Date:** 27 November 2026
+**Branch:** `develop` (HEAD `c76a1ac`; production-readiness changes in the working tree)
+**Scope covered:** the full current application — public portal, staff console, editorial review workflow, media management, authentication, and the production-readiness hardening pass described below. Earlier sections preserve the historical milestone record.
+**Report status:** current readiness snapshot. The development database has all migrations applied and the production-readiness smoke checks pass. The backend test suite still requires its dedicated `campus_kabar_test` database on port 3308 and was not run in this pass; this remains a release-gate limitation.
 
 ---
 
-## Next Session Handoff
+## Production Readiness Update — 27 November 2026
 
-**Read this section first.** Snapshot after Stage 1 of Milestone 3 was implemented and verified.
+### Security and configuration
+- Local `backend/.env` is now mode `600`; `.env` remains gitignored and untracked. Production also refuses to start if the file grants group or other access.
+- Production now refuses to start when `COOKIE_SECURE=false`; secure cookies are mandatory with `NODE_ENV=production`.
+- MySQL TLS is configurable through `DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`, `DB_SSL_CA`, `DB_SSL_CERT`, and `DB_SSL_KEY`. Production rejects a non-localhost `DB_HOST` when TLS is disabled. Local development keeps the default non-TLS connection.
+- All `/api/auth` responses send `Cache-Control: no-store` and `Pragma: no-cache`.
+- Non-`HttpError` 4xx responses now return standardized generic messages instead of parser/framework/service internals. Validation errors raised as `HttpError` keep their intentional user-facing messages.
+- The Admin bootstrap now locks a persistent `system_locks` row (`admin_bootstrap`) in a transaction. This serializes concurrent bootstraps even when `users` has no Admin row. Migration `20261127000001_create_system_locks.js` creates the lock table.
+- Added interactive `npm run reset-admin-password`. It only resets an existing active Admin, hashes with bcrypt cost 12, and revokes all active refresh tokens for that account. Procedure: `docs/ADMIN_RECOVERY.md`.
+- `PATCH /api/posts/:id` now rejects soft-deleted posts with `409 POST_DELETED`. Deleted posts are retained, hidden from public and normal staff listings, immutable, and not restorable through the API.
+- Rate-limit env validation now runs before the configuration error gate, and production also reads `LOGIN_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_MAX`. Invalid values abort startup instead of falling back.
+
+### SEO
+- Added canonical and `og:url` metadata driven by `VITE_PUBLIC_SITE_URL` (frontend) and `PUBLIC_SITE_URL` (backend).
+- Added dynamic `GET /robots.txt` and `GET /sitemap.xml`; the sitemap includes only published, non-deleted, non-expired, non-future posts and active categories.
+- Added `NewsArticle` JSON-LD for news posts, `Article` JSON-LD for other post types, and `Organization` + `WebSite` JSON-LD in the public layout.
+- Category pages now use category-specific titles/descriptions; search pages are `noindex, follow` with canonical `/search`.
+- Social metadata stale-tag handling improved: absent image/description/robots values are removed rather than left from the previous page.
+
+### Documentation
+- Added root `README.md` with architecture, setup, production configuration, deployment shape, SEO, and verification guidance.
+- Replaced `frontend/README.md` with project-specific documentation.
+- Added `docs/ADMIN_RECOVERY.md`.
+
+### Verification
+- `npm run migrate`: batch 3, one migration; 8 migrations applied on the development database.
+- In-process API checks: health 200/database up; `robots.txt` 200; `sitemap.xml` 200 with 8 URLs (home, 4 active categories, 3 published posts); invalid login 401 with `Cache-Control: no-store`; malformed JSON 400 with `{"error":{"code":"REQUEST_ERROR","message":"Invalid request"}}`; bootstrap lock row present.
+- Production config checks: secure-cookie rejection, invalid rate-limit rejection, remote-DB-without-TLS rejection, HTTP `PUBLIC_SITE_URL` rejection, and valid TLS configuration all behaved as intended.
+- `node --check` passes for changed backend files.
+- Frontend `npm run build` passes (bundle-size warning only); focused ESLint on changed public/SEO files passes. The full frontend lint still reports pre-existing set-state-in-effect and Fast Refresh issues in other files.
+- Backend full suite not run in this pass because it requires `campus_kabar_test` on port 3308; no frontend automated tests exist.
+
+### Remaining production blockers
+- No CI/CD, reverse-proxy, static-hosting, backup, monitoring, or structured-logging configuration is committed.
+- The backend test suite still needs an automated disposable MySQL setup before it can serve as a release gate.
+- Public SEO metadata is still applied client-side; prerendering/SSR is still required for reliable social unfurling.
+- Existing functional gaps remain: featured/expiry editor controls, PDF/document attachment UI, external video embeds, galleries, preview, and full-text body search.
+
+---
+
+## Historical Next Session Handoff
+
+**Historical snapshot.** This section predates the completed public portal and the 27 November production-readiness pass. Use the current section above for release status.
 
 ### Status
 
@@ -25,9 +66,9 @@
 | Milestone 3 — Stage 3 (content CRUD) | **Implemented, verified, committed** (categories + posts API) |
 | Milestone 5 — Media management (Cloudinary) | **Implemented, verified** (signed uploads, listing, deletion, references, 47/47 tests pass); not committed/pushed pending review |
 
-**Deliberately not done yet:** frontend screens, tags, `content_text` search, and a descending-index migration. Content management CRUD (categories + posts) is implemented in Stage 3. Media management with Cloudinary signed uploads, validation, listing, deletion, and post references is implemented in Stage 5 and verified against the disposable test DB. (Auth routes/middleware are implemented in Stage 2, committed as `fd429a0`, and pushed.) Real development database `campus_kabar` on 127.0.0.1:3306 is initialized, migrated, and seeded; `backend/.env` (gitignored) points at it.
+**Historical note:** the status table above predates the completed public portal and the 27 November production-readiness pass. Current status is summarized above; earlier sections are retained as an implementation record rather than as current release claims.
 
-**Do not redo:** the six migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
+**Do not redo:** the migrations are verified in both directions; the seed is idempotent; the Express app, server, env loader, and Admin bootstrap work. Running `migrate:latest` again is a no-op.
 
 ### Completed in Stage 1
 

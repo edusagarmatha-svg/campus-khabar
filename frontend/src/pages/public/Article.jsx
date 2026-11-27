@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import Seo from '../../components/public/Seo';
 import TipTapRenderer from '../../components/public/TipTapRenderer';
+import { absoluteUrl, SITE_NAME } from '../../config/site';
 import { getPublicPost } from '../../api/posts';
 
 function formatDate(value) {
@@ -49,6 +50,12 @@ export default function Article() {
   if (error || !post) {
     return (
       <div className="container page-center">
+        <Seo
+          title="Article not found — Campus Kabar"
+          description="The requested article could not be found."
+          url={absoluteUrl(`/posts/${slug}`)}
+          robots="noindex, follow"
+        />
         <div>
           <h1>Article not found</h1>
           <p className="muted">{error}</p>
@@ -60,6 +67,32 @@ export default function Article() {
 
   const cover = post.cover_image;
   const isPoster = post.post_type === 'announcement' || post.post_type === 'notice';
+  const articleUrl = absoluteUrl(`/posts/${post.slug}`);
+  const articleJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': post.post_type === 'news' ? 'NewsArticle' : 'Article',
+    headline: post.title,
+    description: post.summary || undefined,
+    image: cover ? [cover.file_url] : undefined,
+    datePublished: post.published_at || undefined,
+    dateModified: post.updated_at || post.published_at || undefined,
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': articleUrl,
+    },
+    author: {
+      '@type': 'Organization',
+      name: SITE_NAME,
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: SITE_NAME,
+      logo: {
+        '@type': 'ImageObject',
+        url: absoluteUrl('/favicon.svg'),
+      },
+    },
+  };
 
   return (
     <article className="article-page">
@@ -67,7 +100,9 @@ export default function Article() {
         title={`${post.title} — Campus Kabar`}
         description={post.summary || ''}
         image={cover ? cover.file_url : undefined}
+        url={articleUrl}
         type="article"
+        jsonLd={articleJsonLd}
       />
       <div className="container-narrow">
         <header className="article-header">

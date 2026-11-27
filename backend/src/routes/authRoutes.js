@@ -9,6 +9,14 @@ const authController = require('../controllers/authController');
 
 const router = express.Router();
 
+// Auth responses can contain access tokens or user profile data. Never allow a
+// browser, proxy or shared cache to retain them.
+router.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Pragma', 'no-cache');
+  next();
+});
+
 const loginSchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(1),

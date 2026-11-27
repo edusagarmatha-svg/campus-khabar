@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import Seo from '../../components/public/Seo';
+import { absoluteUrl } from '../../config/site';
 import { listPublicPosts } from '../../api/posts';
 
 function formatDate(value) {
@@ -51,7 +52,16 @@ export default function Search() {
 
   return (
     <div className="container section">
-      <Seo title={q ? `Search: ${q} — Campus Kabar` : 'Search — Campus Kabar'} />
+      <Seo
+        title={q ? `Search: ${q} — Campus Kabar` : 'Search — Campus Kabar'}
+        description={
+          q
+            ? `Search results for “${q}” across Campus Kabar news, articles, notices and announcements.`
+            : 'Search Campus Kabar news, articles, notices and announcements.'
+        }
+        url={absoluteUrl('/search')}
+        robots="noindex, follow"
+      />
       <header className="page-header">
         <h1>Search</h1>
       </header>

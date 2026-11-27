@@ -715,11 +715,16 @@ Security is part of the implementation, not a final polish task.
     traces, database details, passwords, tokens, or internal errors.
 -   Validate uploads by size, allowed type, MIME, and content where
     practical.
--   Keep secrets in environment variables.
+-   Keep secrets in environment variables. Keep `backend/.env` at mode
+    `600`; production refuses to start when the file is group- or
+    world-accessible.
 -   Avoid exposing stack traces or sensitive server details to public
-    clients.
--   Use HTTPS in production.
--   Back up the database and uploaded media.
+    clients. Authentication responses must send `Cache-Control: no-store`.
+-   Use HTTPS in production, keep `COOKIE_SECURE=true`, and require TLS
+    for remote/managed MySQL connections.
+-   Back up the database and uploaded media. Document and test an Admin
+    recovery procedure; do not create recovery accounts or store
+    plaintext passwords.
 -   Make the public site responsive and usable on common modern
     browsers.
 -   Optimize images and avoid unnecessarily large assets.

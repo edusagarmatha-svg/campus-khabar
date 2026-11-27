@@ -61,6 +61,6 @@ server.on('error', (error) => {
 
 server.listen(env.port, () => {
   console.log(
-    `[server] Campus Kabar API listening on http://localhost:${env.port} (${env.nodeEnv})`,
+    `[server] Campus Kabar API listening on port ${env.port} (${env.nodeEnv})`,
   );
 });

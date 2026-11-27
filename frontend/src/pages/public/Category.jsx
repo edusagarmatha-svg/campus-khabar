@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Seo from '../../components/public/Seo';
+import { absoluteUrl } from '../../config/site';
 import { listPublicPosts } from '../../api/posts';
 import { listCategories } from '../../api/categories';
 
@@ -53,7 +54,15 @@ export default function Category() {
 
   return (
     <div className="container section">
-      <Seo title={`${category ? category.name : slug} — Campus Kabar`} />
+      <Seo
+        title={`${category ? category.name : slug} — Campus Kabar`}
+        description={
+          category && category.description
+            ? category.description
+            : `Read the latest ${category ? category.name : slug} stories from Campus Kabar.`
+        }
+        url={absoluteUrl(`/category/${slug}`)}
+      />
       <header className="page-header">
         <h1>{category ? category.name : slug}</h1>
         {category && category.description && <p className="page-subtitle">{category.description}</p>}

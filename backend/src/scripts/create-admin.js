@@ -18,6 +18,7 @@ const readline = require('node:readline/promises');
 const db = require('../db/knex');
 
 const BCRYPT_COST = 12;
+const BOOTSTRAP_LOCK_NAME = 'admin_bootstrap';
 const MIN_PASSWORD_LENGTH = 12;
 // bcrypt only uses the first 72 bytes of a password; reject longer input rather
 // than silently accepting a password whose tail is ignored.
@@ -163,12 +164,21 @@ async function main() {
 
   try {
     await db.transaction(async (trx) => {
-      // Re-check inside the transaction with a row lock so two concurrent runs
-      // cannot both create an initial admin.
-      const admin = await trx('users')
-        .where({ role: 'admin' })
+      // A named row is locked FOR UPDATE. Unlike locking the users table, this
+      // works when there is no Admin row yet, so concurrent bootstraps cannot
+      // both pass the existence check.
+      const bootstrapLock = await trx('system_locks')
+        .where({ name: BOOTSTRAP_LOCK_NAME })
         .forUpdate()
-        .first('id');
+        .first();
+
+      if (!bootstrapLock) {
+        const error = new Error('Bootstrap lock row is missing. Run migrations first.');
+        error.code = 'BOOTSTRAP_LOCK_MISSING';
+        throw error;
+      }
+
+      const admin = await trx('users').where({ role: 'admin' }).forUpdate().first('id');
 
       if (admin) {
         const error = new Error('An admin account already exists.');
@@ -187,6 +197,11 @@ async function main() {
   } catch (error) {
     if (error.code === 'ADMIN_EXISTS') {
       console.error('Refusing to run: an admin account already exists.');
+      return 1;
+    }
+
+    if (error.code === 'BOOTSTRAP_LOCK_MISSING') {
+      console.error('The bootstrap lock is missing. Run `npm run migrate` first.');
       return 1;
     }
 

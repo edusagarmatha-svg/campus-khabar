@@ -1,6 +1,32 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { listCategories } from "../../api/categories";
+import StructuredData from "./StructuredData";
+import { SITE_NAME, SITE_URL } from "../../config/site";
+
+const ORGANIZATION_SCHEMA = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: SITE_NAME,
+    url: SITE_URL,
+    logo: {
+      '@type': 'ImageObject',
+      url: `${SITE_URL}/favicon.svg`,
+    },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: SITE_NAME,
+    url: SITE_URL,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${SITE_URL}/search?q={search_term_string}`,
+      'query-input': 'required name=search_term_string',
+    },
+  },
+];
 
 export default function PublicLayout() {
   const [categories, setCategories] = useState([]);
@@ -22,10 +48,11 @@ export default function PublicLayout() {
 
   return (
     <div className="public-shell">
+      <StructuredData id="organization-structured-data" data={ORGANIZATION_SCHEMA} />
       <header className="site-header">
         <div className="container site-header-inner">
           <Link to="/" className="site-logo">
-            Campus Khabar
+            {SITE_NAME}
           </Link>
           <button
             type="button"
@@ -59,8 +86,27 @@ export default function PublicLayout() {
               Search
             </Link>
           </nav>
-          <Link to="/login" className="staff-login-link">
-            Staff Login
+          <Link
+            to="/login"
+            className="staff-login-link"
+            aria-label="Staff login"
+            title="Staff login"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+              <path d="m10 17 5-5-5-5" />
+              <path d="M15 12H3" />
+            </svg>
           </Link>
         </div>
         <div className="site-header-rule" />
@@ -74,9 +120,6 @@ export default function PublicLayout() {
         <div className="container">
           <div className="footer-inner">
             <span className="footer-brand">Campus Kabar</span>
-            <Link to="/login" className="staff-login-link">
-              Staff Login
-            </Link>
             <span className="footer-meta">
               © {new Date().getFullYear()} Campus Kabar. All rights reserved.
             </span>

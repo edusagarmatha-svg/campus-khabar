@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Seo from '../../components/public/Seo';
+import { absoluteUrl } from '../../config/site';
 import { listPublicPosts } from '../../api/posts';
 import { listCategories } from '../../api/categories';
 
@@ -86,6 +87,7 @@ export default function Home() {
       <Seo
         title="Campus Kabar — Latest news and stories"
         description="Campus Kabar brings you the latest news, articles, notices and announcements."
+        url={absoluteUrl('/')}
       />
 
       {featured && (

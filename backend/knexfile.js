@@ -13,6 +13,9 @@ const env = require('./src/config/env');
  * All timestamps are stored in UTC. The connection is pinned to +00:00 and
  * `timezone: 'Z'` tells mysql2 to read DATETIME values back as UTC, so the
  * application never has to reason about the server's local timezone.
+ *
+ * `env.db.ssl` is passed through to mysql2. It is `false` for local
+ * development and an SSL options object for configured remote/managed DBs.
  */
 function connection() {
   return {

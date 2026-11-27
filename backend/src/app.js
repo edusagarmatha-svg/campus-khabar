@@ -5,6 +5,7 @@ const cookieParser = require('cookie-parser');
 
 const env = require('./config/env');
 const db = require('./db/knex');
+const { isHttpError } = require('./utils/errors');
 const authRoutes = require('./routes/authRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const postRoutes = require('./routes/postRoutes');
@@ -12,6 +13,7 @@ const postRevisionRoutes = require('./routes/postRevisionRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const userRoutes = require('./routes/userRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const seoRoutes = require('./routes/seoRoutes');
 
 const app = express();
 
@@ -69,14 +71,34 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin/dashboard', dashboardRoutes);
 
+// Public SEO files are served from the API so they can be generated from the
+// live database. A reverse proxy should expose these at the site root.
+app.use('/', seoRoutes);
+
 app.use((req, res) => {
   res.status(404).json({
     error: {
       code: 'NOT_FOUND',
-      message: `No route for ${req.method} ${req.originalUrl}`,
+      message: 'The requested resource was not found',
     },
   });
 });
+
+// Deliberately generic messages for errors that did not originate from an
+// HttpError. This keeps parser, database and framework details out of 4xx
+// responses while still allowing service-layer validation messages.
+const SAFE_4XX_MESSAGES = {
+  400: 'Invalid request',
+  401: 'Authentication required',
+  403: 'Forbidden',
+  404: 'Not found',
+  405: 'Method not allowed',
+  409: 'Request conflicts with the current state',
+  413: 'Request body is too large',
+  415: 'Unsupported media type',
+  422: 'Invalid request',
+  429: 'Too many requests',
+};
 
 // eslint-disable-next-line no-unused-vars
 app.use((error, req, res, next) => {
@@ -84,23 +106,29 @@ app.use((error, req, res, next) => {
     return next(error);
   }
 
-  const status = Number.isInteger(error.status) ? error.status : 500;
-  const code =
-    (typeof error.code === 'string' && error.code) ||
-    (status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR');
+  let status;
+  let code;
+  let message;
+
+  if (isHttpError(error)) {
+    status = error.status;
+    code = error.code;
+    message = error.message;
+  } else {
+    status = Number.isInteger(error.status) ? error.status : 500;
+    code = status >= 500 ? 'INTERNAL_ERROR' : 'REQUEST_ERROR';
+    message =
+      status >= 500
+        ? 'An unexpected error occurred'
+        : SAFE_4XX_MESSAGES[status] || 'Request failed';
+  }
 
   if (status >= 500) {
     console.error('[api] unhandled error:', error);
   }
 
   res.status(status).json({
-    error: {
-      code,
-      message:
-        status >= 500
-          ? 'An unexpected error occurred'
-          : error.message || 'Request failed',
-    },
+    error: { code, message },
   });
 });
 

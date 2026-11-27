@@ -47,8 +47,16 @@
   --text: var(--color-text);
   --muted: var(--color-text-secondary);
   --primary: var(--color-accent);
+  --primary-hover: #99202a;
   --danger: #dc2626;
+  --danger-hover: #b91c1c;
   --radius: var(--radius-md);
+
+  /* Staff console control system */
+  --control-height: 38px;
+  --control-height-sm: 30px;
+  --control-radius: var(--radius-sm);
+  --focus-ring: 0 0 0 3px rgba(180, 35, 47, 0.16);
 }
 
 * {

@@ -1,9 +1,12 @@
+const fs = require('node:fs');
 const path = require('node:path');
+
+const ENV_FILE = path.join(__dirname, '..', '..', '.env');
 
 // Load backend/.env regardless of the process working directory, so `node
 // src/server.js` behaves the same whether it is started from backend/ or the
 // repository root. Real process env vars always win over .env values.
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+require('dotenv').config({ path: ENV_FILE });
 
 const VALID_ENVIRONMENTS = ['development', 'test', 'production'];
 const VALID_SAME_SITE = ['strict', 'lax', 'none'];
@@ -101,6 +104,19 @@ if (!VALID_ENVIRONMENTS.includes(nodeEnv)) {
 const isProduction = nodeEnv === 'production';
 const isTest = nodeEnv === 'test';
 
+// A deployed .env must not be readable by other local users. Orchestrators that
+// inject environment variables directly have no file to check.
+if (isProduction && process.platform !== 'win32' && fs.existsSync(ENV_FILE)) {
+  try {
+    const mode = fs.statSync(ENV_FILE).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      errors.push('backend/.env must not be accessible by group or others; use chmod 600');
+    }
+  } catch (error) {
+    errors.push(`backend/.env permissions could not be checked (${error.code || 'file error'})`);
+  }
+}
+
 const port = readPort('PORT', 4000);
 const dbPort = readPort('DB_PORT', 3306);
 
@@ -113,18 +129,82 @@ if (corsOrigins.length === 0) {
   errors.push('CORS_ORIGIN must contain at least one origin');
 }
 
+// Public site URL used for canonical links, robots.txt and the XML sitemap.
+// Development may omit it; production must be explicit and HTTPS.
+const publicSiteUrl = (
+  process.env.PUBLIC_SITE_URL || (isProduction ? '' : 'http://localhost:5173')
+).replace(/\/+$/, '');
+
+if (!publicSiteUrl && isProduction) {
+  errors.push('PUBLIC_SITE_URL is required when NODE_ENV=production');
+} else if (publicSiteUrl) {
+  try {
+    const parsed = new URL(publicSiteUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      errors.push('PUBLIC_SITE_URL must use http or https');
+    }
+    if (isProduction && parsed.protocol !== 'https:') {
+      errors.push('PUBLIC_SITE_URL must use https when NODE_ENV=production');
+    }
+  } catch {
+    errors.push('PUBLIC_SITE_URL must be a valid absolute URL');
+  }
+}
+
+// TLS is opt-in for local development. In production a non-local database
+// host must use TLS so credentials and content are never sent in clear text.
+const dbSslEnabled = readBoolean('DB_SSL', false);
+const dbSslRejectUnauthorized = readBoolean('DB_SSL_REJECT_UNAUTHORIZED', true);
+
+function readPemFile(name) {
+  const filePath = process.env[name];
+
+  if (!filePath) {
+    return null;
+  }
+
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    errors.push(`${name} could not be read (${error.code || 'file error'})`);
+    return null;
+  }
+}
+
+const dbSslCa = dbSslEnabled ? readPemFile('DB_SSL_CA') : null;
+const dbSslCert = dbSslEnabled ? readPemFile('DB_SSL_CERT') : null;
+const dbSslKey = dbSslEnabled ? readPemFile('DB_SSL_KEY') : null;
+
+const dbSsl = dbSslEnabled
+  ? {
+      rejectUnauthorized: dbSslRejectUnauthorized,
+      ...(dbSslCa ? { ca: dbSslCa } : {}),
+      ...(dbSslCert ? { cert: dbSslCert } : {}),
+      ...(dbSslKey ? { key: dbSslKey } : {}),
+    }
+  : false;
+
 const db = {
   host: process.env.DB_HOST || '127.0.0.1',
   port: dbPort,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'campus_kabar',
+  ssl: dbSsl,
 };
+
+const localDbHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+
+if (isProduction && !localDbHosts.has(db.host) && !dbSslEnabled) {
+  errors.push(
+    'DB_SSL must be true when NODE_ENV=production and DB_HOST is not localhost',
+  );
+}
 
 // Local development may rely on defaults; a deployed process must be explicit
 // so it can never silently connect to a default database with a blank password.
 if (isProduction) {
-  for (const name of ['DB_USER', 'DB_PASSWORD', 'DB_NAME']) {
+  for (const name of ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME']) {
     if (!process.env[name]) {
       errors.push(`${name} is required when NODE_ENV=production`);
     }
@@ -132,6 +212,20 @@ if (isProduction) {
 
   if (!process.env.CORS_ORIGIN) {
     errors.push('CORS_ORIGIN is required when NODE_ENV=production');
+  }
+
+  for (const origin of corsOrigins) {
+    try {
+      const parsed = new URL(origin);
+      if (parsed.protocol !== 'https:') {
+        errors.push(`CORS_ORIGIN entries must use https in production; got "${origin}"`);
+      }
+      if (localDbHosts.has(parsed.hostname)) {
+        errors.push(`CORS_ORIGIN must not use localhost in production; got "${origin}"`);
+      }
+    } catch {
+      errors.push(`CORS_ORIGIN contains an invalid origin; got "${origin}"`);
+    }
   }
 }
 
@@ -186,9 +280,13 @@ if (!VALID_SAME_SITE.includes(cookieSameSite)) {
   );
 }
 
-// Secure defaults to true in production but stays configurable, because a
-// deployment may terminate TLS in front of the API or use a different topology.
+// Secure defaults to true in production. A deployment may terminate TLS in
+// front of the API, but the browser-facing cookie must still be Secure.
 const cookieSecure = readBoolean('COOKIE_SECURE', isProduction);
+
+if (isProduction && !cookieSecure) {
+  errors.push('COOKIE_SECURE must be true when NODE_ENV=production');
+}
 
 if (cookieSameSite === 'none' && !cookieSecure) {
   errors.push('COOKIE_SAMESITE=none requires COOKIE_SECURE=true');
@@ -245,12 +343,6 @@ if (isProduction && !cloudinaryConfigured) {
   );
 }
 
-if (errors.length > 0) {
-  throw new Error(
-    `Invalid environment configuration:\n  - ${errors.join('\n  - ')}`,
-  );
-}
-
 // --- Rate limiting -------------------------------------------------------
 // Applied to authentication endpoints. In test mode the limit is effectively
 // disabled so the suite stays deterministic. In development the default is
@@ -272,18 +364,20 @@ function readRateLimitMax(name, fallback) {
 
 const loginRateLimitMax = isTest
   ? 100000
-  : isProduction
-    ? 10
-    : readRateLimitMax('LOGIN_RATE_LIMIT_MAX', 100);
+  : readRateLimitMax('LOGIN_RATE_LIMIT_MAX', isProduction ? 10 : 100);
 
 const authRateLimitMax = isTest
   ? 100000
-  : isProduction
-    ? 100
-    : readRateLimitMax('AUTH_RATE_LIMIT_MAX', 1000);
+  : readRateLimitMax('AUTH_RATE_LIMIT_MAX', isProduction ? 100 : 1000);
 
 const rateLimitDisabled =
   !isProduction && process.env.RATE_LIMIT_DISABLED === 'true';
+
+if (errors.length > 0) {
+  throw new Error(
+    `Invalid environment configuration:\n  - ${errors.join('\n  - ')}`,
+  );
+}
 
 /**
  * Single source of truth for environment settings. Secrets stay in memory and
@@ -295,6 +389,7 @@ module.exports = Object.freeze({
   isTest,
   port,
   corsOrigins: Object.freeze(corsOrigins),
+  publicSiteUrl,
   db: Object.freeze(db),
   trustProxy,
   auth: Object.freeze({

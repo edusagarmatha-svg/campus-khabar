@@ -11,6 +11,7 @@
     "migrate:make": "knex migrate:make",
     "seed": "knex seed:run",
     "create-admin": "node src/scripts/create-admin.js",
+    "reset-admin-password": "node src/scripts/reset-admin-password.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js"
   },
   "keywords": [],

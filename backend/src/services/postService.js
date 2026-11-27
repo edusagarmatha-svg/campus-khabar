@@ -643,6 +643,11 @@ async function updatePost(user, id, input) {
     throw httpError(403, 'FORBIDDEN', 'Insufficient permissions');
   }
 
+  // Soft-deleted posts are retained for audit/reference but are immutable.
+  if (existing.deleted_at) {
+    throw httpError(409, 'POST_DELETED', 'Deleted posts cannot be edited');
+  }
+
   const normalized = normalizePostInput(input || {}, { partial: true });
 
   if (user.role !== 'admin') {

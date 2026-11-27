@@ -11,14 +11,16 @@ export default function AppShell() {
   const isAdmin = user?.role === "admin";
 
   async function handleLogout() {
+    // Leave the protected area before clearing the session so RequireAuth
+    // cannot redirect to the login screen first.
+    navigate("/", { replace: true });
     await logout();
-    navigate("/login", { replace: true });
   }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="sidebar-title">Campus Khabar</div>
+        <div className="sidebar-title">Campus Kabar</div>
         <nav className="sidebar-nav" aria-label="Staff sections">
           <NavLink to="/admin" end className={navClass}>
             Dashboard

@@ -844,19 +844,32 @@
   }
 }
 
-/* Staff login link (subtle) */
+/* Staff login icon */
 .staff-login-link {
-  font-family: var(--font-sans);
-  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
   color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   text-decoration: none;
-  padding: 4px 0;
-  border-bottom: 1px solid transparent;
-  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .staff-login-link:hover {
   color: var(--color-text);
-  border-bottom-color: var(--color-border);
+  border-color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
   text-decoration: none;
+}
+
+.staff-login-link:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+  color: var(--color-text);
 }
